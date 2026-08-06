@@ -32,6 +32,8 @@ function stripHtml(html: string) {
   return doc.body.textContent?.trim() ?? '';
 }
 
+// This standalone entry intentionally declares and renders its only component.
+// eslint-disable-next-line react-refresh/only-export-components
 function TeamsGraphTestApp() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
