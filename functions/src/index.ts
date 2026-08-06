@@ -313,10 +313,12 @@ export const saveWorkOrder = onCall(
         transaction.get(confirmationRef),
       ]);
       const scheduleData = scheduleDoc.data();
-      const existingTrucks: Record<string, unknown>[] = Array.isArray(
-        scheduleData?.trucks
-      )
-        ? (scheduleData.trucks as Record<string, unknown>[])
+      const storedTrucks =
+        scheduleData && Array.isArray(scheduleData.trucks)
+          ? scheduleData.trucks
+          : null;
+      const existingTrucks: Record<string, unknown>[] = storedTrucks
+        ? (storedTrucks as Record<string, unknown>[])
         : [
             { id: "truck1", name: "Truck 1", stops: [] },
             { id: "truck2", name: "Truck 2", stops: [] },
