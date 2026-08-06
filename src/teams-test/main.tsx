@@ -1,6 +1,7 @@
 import { StrictMode, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
+  acquireToken,
   getActiveAccount,
   handleRedirectPromise,
   signIn,
@@ -18,12 +19,25 @@ import {
   type GraphTeam,
 } from './graphClient';
 import { extractPdfText } from './pdf';
+import WorkOrderReview from './WorkOrderReview';
+import {
+  extractWorkOrder as extractStructuredWorkOrder,
+  saveWorkOrder,
+} from '../services/workOrderService';
+import type { WorkOrder } from '../types';
 import '../index.css';
 import './teams-test.css';
 
 interface PdfResult {
   loading?: boolean;
   text?: string;
+  error?: string;
+}
+
+interface ProcessedWorkOrder {
+  workOrder: WorkOrder;
+  status: 'draft' | 'saving' | 'saved';
+  reminderQueued?: boolean;
   error?: string;
 }
 
@@ -44,6 +58,10 @@ function TeamsGraphTestApp() {
   const [channels, setChannels] = useState<GraphChannel[]>([]);
   const [messages, setMessages] = useState<GraphMessage[]>([]);
   const [pdfResults, setPdfResults] = useState<Record<string, PdfResult>>({});
+  const [processingKeys, setProcessingKeys] = useState<Record<string, boolean>>({});
+  const [processedWorkOrders, setProcessedWorkOrders] = useState<
+    Record<string, ProcessedWorkOrder>
+  >({});
 
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
@@ -115,33 +133,142 @@ function TeamsGraphTestApp() {
     }
   };
 
-  const handleReadPdf = async (
+  const readPdfText = async (
     messageId: string,
     attachment: GraphAttachment
-  ) => {
-    if (!selectedTeamId) return;
+  ): Promise<string> => {
+    if (!selectedTeamId) throw new Error('Select a team first.');
 
     const key = `${messageId}:${attachment.id}`;
     setPdfResults((current) => ({
       ...current,
-      [key]: { loading: true },
+      [key]: { ...current[key], loading: true, error: undefined },
     }));
 
     try {
       const data = await downloadChannelAttachment(selectedTeamId, attachment);
       const text = await extractPdfText(data);
+      const readableText = text || 'No readable text was found in this PDF.';
       setPdfResults((current) => ({
         ...current,
-        [key]: { text: text || 'No readable text was found in this PDF.' },
+        [key]: { text: readableText },
       }));
+      return readableText;
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       setPdfResults((current) => ({
         ...current,
         [key]: {
+          error: message,
+        },
+      }));
+      throw new Error(message);
+    }
+  };
+
+  const handleProcessWorkOrder = async (
+    messageId: string,
+    attachment: GraphAttachment
+  ) => {
+    const key = `${messageId}:${attachment.id}`;
+    setProcessingKeys((current) => ({ ...current, [key]: true }));
+
+    try {
+      const text = pdfResults[key]?.text ?? (await readPdfText(messageId, attachment));
+      if (text === 'No readable text was found in this PDF.') {
+        throw new Error(
+          'This appears to be a scanned PDF. OCR is required before AI extraction.'
+        );
+      }
+
+      const workOrder = await extractStructuredWorkOrder(
+        text,
+        attachment.name ?? 'work-order.pdf',
+        await acquireToken()
+      );
+      setProcessedWorkOrders((current) => ({
+        ...current,
+        [key]: { workOrder, status: 'draft' },
+      }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setPdfResults((current) => ({
+        ...current,
+        [key]: { ...current[key], error: message },
+      }));
+    } finally {
+      setProcessingKeys((current) => ({ ...current, [key]: false }));
+    }
+  };
+
+  const handleSaveWorkOrder = async (key: string) => {
+    const processed = processedWorkOrders[key];
+    if (!processed) return;
+
+    setProcessedWorkOrders((current) => ({
+      ...current,
+      [key]: { ...processed, status: 'saving', error: undefined },
+    }));
+
+    try {
+      const result = await saveWorkOrder(
+        processed.workOrder,
+        await acquireToken()
+      );
+      setProcessedWorkOrders((current) => ({
+        ...current,
+        [key]: {
+          ...current[key],
+          status: 'saved',
+          reminderQueued: result.reminderQueued,
+          error: undefined,
+        },
+      }));
+    } catch (err) {
+      setProcessedWorkOrders((current) => ({
+        ...current,
+        [key]: {
+          ...current[key],
+          status: 'draft',
           error: err instanceof Error ? err.message : String(err),
         },
       }));
     }
+  };
+
+  const exportWorkOrdersCsv = () => {
+    const records = Object.values(processedWorkOrders).map(
+      (processed) => processed.workOrder
+    );
+    const columns: Array<keyof WorkOrder> = [
+      'workOrderNumber',
+      'customerName',
+      'phone',
+      'address',
+      'jobType',
+      'appointmentDate',
+      'appointmentTime',
+      'notes',
+      'sourceFileName',
+      'smsConsent',
+    ];
+    const escape = (value: unknown) => {
+      const text = String(value ?? '');
+      const spreadsheetSafe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+      return `"${spreadsheetSafe.replace(/"/g, '""')}"`;
+    };
+    const csv = [
+      columns.join(','),
+      ...records.map((record) =>
+        columns.map((column) => escape(record[column])).join(',')
+      ),
+    ].join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `work-orders-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -181,8 +308,9 @@ function TeamsGraphTestApp() {
       )}
 
       {!loading && signedIn && (
-        <div className="teams-test__layout">
-          <aside className="teams-test__panel">
+        <>
+          <div className="teams-test__layout">
+            <aside className="teams-test__panel">
             <h2>Teams</h2>
             <ul>
               {teams.map((team) => (
@@ -197,9 +325,9 @@ function TeamsGraphTestApp() {
                 </li>
               ))}
             </ul>
-          </aside>
+            </aside>
 
-          <aside className="teams-test__panel">
+            <aside className="teams-test__panel">
             <h2>Channels</h2>
             {selectedTeamId ? (
               <ul>
@@ -218,9 +346,9 @@ function TeamsGraphTestApp() {
             ) : (
               <p className="teams-test__hint">Select a team</p>
             )}
-          </aside>
+            </aside>
 
-          <main className="teams-test__messages">
+            <main className="teams-test__messages">
             <h2>
               Messages
               {selectedChannelName
@@ -255,17 +383,40 @@ function TeamsGraphTestApp() {
                           <div key={attachment.id} className="teams-test__attachment">
                             <div className="teams-test__attachment-header">
                               <span>PDF: {attachment.name ?? 'Attachment'}</span>
-                              <button
-                                type="button"
-                                disabled={result?.loading}
-                                onClick={() => handleReadPdf(message.id, attachment)}
-                              >
-                                {result?.loading
-                                  ? 'Reading…'
-                                  : result?.text
-                                    ? 'Read again'
-                                    : 'Read PDF'}
-                              </button>
+                              <div className="teams-test__attachment-actions">
+                                <button
+                                  type="button"
+                                  disabled={result?.loading}
+                                  onClick={() => {
+                                    void readPdfText(message.id, attachment).catch(
+                                      () => undefined
+                                    );
+                                  }}
+                                >
+                                  {result?.loading
+                                    ? 'Reading…'
+                                    : result?.text
+                                      ? 'Read again'
+                                      : 'Read PDF'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={
+                                    result?.loading ||
+                                    processingKeys[key] ||
+                                    Boolean(processedWorkOrders[key])
+                                  }
+                                  onClick={() =>
+                                    handleProcessWorkOrder(message.id, attachment)
+                                  }
+                                >
+                                  {processingKeys[key]
+                                    ? 'Processing…'
+                                    : processedWorkOrders[key]
+                                      ? 'Processed'
+                                      : 'Process work order'}
+                                </button>
+                              </div>
                             </div>
                             {attachment.contentUrl && (
                               <a
@@ -291,8 +442,47 @@ function TeamsGraphTestApp() {
                 ))}
               </ul>
             )}
-          </main>
-        </div>
+            </main>
+          </div>
+
+          {Object.keys(processedWorkOrders).length > 0 && (
+            <section className="teams-test__processed">
+              <div className="teams-test__processed-header">
+                <div>
+                  <h2>Processed work orders</h2>
+                  <p>
+                    Review each record before scheduling customer communication.
+                  </p>
+                </div>
+                <button type="button" onClick={exportWorkOrdersCsv}>
+                  Export CSV for Google Sheets
+                </button>
+              </div>
+
+              {Object.entries(processedWorkOrders).map(([key, processed]) => (
+                <WorkOrderReview
+                  key={key}
+                  workOrder={processed.workOrder}
+                  status={processed.status}
+                  reminderQueued={processed.reminderQueued}
+                  error={processed.error}
+                  onChange={(workOrder) =>
+                    setProcessedWorkOrders((current) => ({
+                      ...current,
+                      [key]: {
+                        ...current[key],
+                        workOrder,
+                        status: 'draft',
+                        error: undefined,
+                      },
+                    }))
+                  }
+                  onSave={() => handleSaveWorkOrder(key)}
+                />
+              ))}
+            </section>
+          )}
+        </>
       )}
     </div>
   );

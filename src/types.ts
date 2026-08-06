@@ -1,9 +1,12 @@
 export interface Stop {
   id: string;
+  workOrderNumber?: string;
   address: string;
   customerName: string;
   phone: string;
   time: string;
+  jobType?: string;
+  sourceFileName?: string;
   notes?: string;
   lat?: number;
   lng?: number;
@@ -23,6 +26,20 @@ export interface Truck {
 export interface Schedule {
   date: string;
   trucks: Truck[];
+}
+
+export interface WorkOrder {
+  workOrderNumber: string;
+  customerName: string;
+  phone: string;
+  address: string;
+  jobType: string;
+  appointmentDate: string;
+  appointmentTime: string;
+  notes: string;
+  sourceFileName: string;
+  smsConsent: boolean;
+  confidence?: number;
 }
 
 

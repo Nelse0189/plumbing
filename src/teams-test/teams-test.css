@@ -167,6 +167,12 @@
   font-size: 0.85rem;
 }
 
+.teams-test__attachment-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .teams-test__attachment a {
   color: var(--success);
   font-size: 0.8rem;
@@ -191,6 +197,91 @@
   word-break: break-word;
 }
 
+.teams-test__processed {
+  max-width: 1200px;
+  margin: 1.5rem auto 0;
+}
+
+.teams-test__processed-header,
+.teams-test__work-order-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.teams-test__processed-header {
+  margin-bottom: 1rem;
+}
+
+.teams-test__processed-header h2 {
+  color: var(--accent);
+  font-size: 1.1rem;
+}
+
+.teams-test__processed-header p,
+.teams-test__work-order-title span {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.teams-test__work-order {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+}
+
+.teams-test__work-order-title > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.teams-test__review-warning {
+  margin: 0.75rem 0;
+  color: var(--accent);
+  font-size: 0.8rem;
+}
+
+.teams-test__work-order-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.teams-test__work-order label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.teams-test__work-order input,
+.teams-test__work-order textarea {
+  width: 100%;
+  padding: 0.55rem;
+}
+
+.teams-test__work-order textarea {
+  min-height: 80px;
+  margin-bottom: 0.75rem;
+}
+
+.teams-test__work-order .teams-test__consent {
+  flex-direction: row;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  color: var(--text-primary);
+}
+
+.teams-test__consent input {
+  width: auto;
+}
+
 @media (max-width: 900px) {
   .teams-test__layout {
     grid-template-columns: 1fr;
@@ -198,5 +289,12 @@
 
   .teams-test__panel--wide {
     grid-column: span 1;
+  }
+
+  .teams-test__processed-header,
+  .teams-test__work-order-title,
+  .teams-test__attachment-header {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
