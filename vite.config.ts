@@ -5,6 +5,9 @@ import { resolve } from 'path'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  server: {
+    allowedHosts: ['.trycloudflare.com'],
+  },
   build: {
     rollupOptions: {
       input: {
