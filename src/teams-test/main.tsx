@@ -1,0 +1,287 @@
+import { StrictMode, useCallback, useEffect, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import {
+  getActiveAccount,
+  handleRedirectPromise,
+  signIn,
+  signOut,
+} from './auth';
+import {
+  getChannelMessages,
+  getChatMessages,
+  getChats,
+  getJoinedTeams,
+  getMe,
+  getTeamChannels,
+  type GraphChannel,
+  type GraphChat,
+  type GraphMessage,
+  type GraphTeam,
+} from './graphClient';
+import '../index.css';
+import './teams-test.css';
+
+type Tab = 'channels' | 'chats';
+
+function stripHtml(html: string) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  return doc.body.textContent?.trim() ?? '';
+}
+
+function TeamsGraphTestApp() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [signedIn, setSignedIn] = useState(false);
+  const [profileName, setProfileName] = useState('');
+  const [tab, setTab] = useState<Tab>('channels');
+
+  const [teams, setTeams] = useState<GraphTeam[]>([]);
+  const [channels, setChannels] = useState<GraphChannel[]>([]);
+  const [chats, setChats] = useState<GraphChat[]>([]);
+  const [messages, setMessages] = useState<GraphMessage[]>([]);
+
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
+  const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
+  const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
+
+  const [selectedTeamName, setSelectedTeamName] = useState('');
+  const [selectedChannelName, setSelectedChannelName] = useState('');
+  const [selectedChatName, setSelectedChatName] = useState('');
+
+  const loadSignedInState = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const account = getActiveAccount();
+      if (!account) {
+        setSignedIn(false);
+        return;
+      }
+
+      setSignedIn(true);
+      const me = await getMe();
+      setProfileName(me.displayName ?? me.mail ?? me.userPrincipalName ?? 'Signed in');
+
+      const teamsResponse = await getJoinedTeams();
+      setTeams(teamsResponse.value);
+
+      const chatsResponse = await getChats();
+      setChats(chatsResponse.value);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setSignedIn(false);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    handleRedirectPromise()
+      .then(() => loadSignedInState())
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : String(err));
+        setLoading(false);
+      });
+  }, [loadSignedInState]);
+
+  const handleSelectTeam = async (team: GraphTeam) => {
+    setError(null);
+    setSelectedTeamId(team.id);
+    setSelectedTeamName(team.displayName);
+    setSelectedChannelId(null);
+    setSelectedChannelName('');
+    setMessages([]);
+
+    try {
+      const response = await getTeamChannels(team.id);
+      setChannels(response.value);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleSelectChannel = async (channel: GraphChannel) => {
+    if (!selectedTeamId) return;
+    setError(null);
+    setSelectedChannelId(channel.id);
+    setSelectedChannelName(channel.displayName);
+    setMessages([]);
+
+    try {
+      const response = await getChannelMessages(selectedTeamId, channel.id);
+      setMessages(response.value);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleSelectChat = async (chat: GraphChat) => {
+    setError(null);
+    setSelectedChatId(chat.id);
+    setSelectedChatName(chat.topic ?? chat.chatType);
+    setMessages([]);
+
+    try {
+      const response = await getChatMessages(chat.id);
+      setMessages(response.value);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  return (
+    <div className="teams-test">
+      <header className="teams-test__header">
+        <div>
+          <h1>Teams Graph Test</h1>
+          <p className="teams-test__subtitle">
+            Tests the same Azure app + Graph permissions as your Cursor MCP setup
+          </p>
+        </div>
+        <div className="teams-test__header-actions">
+          {signedIn && <span className="teams-test__profile">{profileName}</span>}
+          {signedIn ? (
+            <button type="button" onClick={() => signOut()}>
+              Sign out
+            </button>
+          ) : (
+            <button type="button" onClick={() => signIn()}>
+              Sign in with Microsoft
+            </button>
+          )}
+        </div>
+      </header>
+
+      {error && <div className="teams-test__error">{error}</div>}
+
+      {loading && <div className="teams-test__loading">Loading…</div>}
+
+      {!loading && !signedIn && (
+        <section className="teams-test__empty">
+          <p>Sign in with your work Microsoft account to load Teams and messages.</p>
+          <p className="teams-test__hint">
+            Redirect URI for Azure: <code>{window.location.origin}{window.location.pathname}</code>
+          </p>
+        </section>
+      )}
+
+      {!loading && signedIn && (
+        <>
+          <div className="teams-test__tabs">
+            <button
+              type="button"
+              className={tab === 'channels' ? 'active' : ''}
+              onClick={() => setTab('channels')}
+            >
+              Teams &amp; Channels
+            </button>
+            <button
+              type="button"
+              className={tab === 'chats' ? 'active' : ''}
+              onClick={() => setTab('chats')}
+            >
+              Chats
+            </button>
+          </div>
+
+          <div className="teams-test__layout">
+            {tab === 'channels' ? (
+              <>
+                <aside className="teams-test__panel">
+                  <h2>Teams</h2>
+                  <ul>
+                    {teams.map((team) => (
+                      <li key={team.id}>
+                        <button
+                          type="button"
+                          className={selectedTeamId === team.id ? 'selected' : ''}
+                          onClick={() => handleSelectTeam(team)}
+                        >
+                          {team.displayName}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </aside>
+
+                <aside className="teams-test__panel">
+                  <h2>Channels</h2>
+                  {selectedTeamId ? (
+                    <ul>
+                      {channels.map((channel) => (
+                        <li key={channel.id}>
+                          <button
+                            type="button"
+                            className={selectedChannelId === channel.id ? 'selected' : ''}
+                            onClick={() => handleSelectChannel(channel)}
+                          >
+                            {channel.displayName}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="teams-test__hint">Select a team</p>
+                  )}
+                </aside>
+              </>
+            ) : (
+              <aside className="teams-test__panel teams-test__panel--wide">
+                <h2>Chats</h2>
+                <ul>
+                  {chats.map((chat) => (
+                    <li key={chat.id}>
+                      <button
+                        type="button"
+                        className={selectedChatId === chat.id ? 'selected' : ''}
+                        onClick={() => handleSelectChat(chat)}
+                      >
+                        {chat.topic ?? chat.chatType}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </aside>
+            )}
+
+            <main className="teams-test__messages">
+              <h2>
+                Messages
+                {tab === 'channels' && selectedChannelName
+                  ? ` — ${selectedTeamName} / ${selectedChannelName}`
+                  : ''}
+                {tab === 'chats' && selectedChatName ? ` — ${selectedChatName}` : ''}
+              </h2>
+
+              {messages.length === 0 ? (
+                <p className="teams-test__hint">
+                  {tab === 'channels'
+                    ? 'Select a team and channel to load messages'
+                    : 'Select a chat to load messages'}
+                </p>
+              ) : (
+                <ul className="teams-test__message-list">
+                  {messages.map((message) => (
+                    <li key={message.id} className="teams-test__message">
+                      <div className="teams-test__message-meta">
+                        <strong>{message.from?.user?.displayName ?? 'Unknown'}</strong>
+                        <span>{new Date(message.createdDateTime).toLocaleString()}</span>
+                      </div>
+                      <p>{stripHtml(message.body?.content ?? '')}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </main>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <TeamsGraphTestApp />
+  </StrictMode>
+);
