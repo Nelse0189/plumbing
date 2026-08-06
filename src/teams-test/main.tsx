@@ -8,20 +8,15 @@ import {
 } from './auth';
 import {
   getChannelMessages,
-  getChatMessages,
-  getChats,
   getJoinedTeams,
   getMe,
   getTeamChannels,
   type GraphChannel,
-  type GraphChat,
   type GraphMessage,
   type GraphTeam,
 } from './graphClient';
 import '../index.css';
 import './teams-test.css';
-
-type Tab = 'channels' | 'chats';
 
 function stripHtml(html: string) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -33,20 +28,16 @@ function TeamsGraphTestApp() {
   const [error, setError] = useState<string | null>(null);
   const [signedIn, setSignedIn] = useState(false);
   const [profileName, setProfileName] = useState('');
-  const [tab, setTab] = useState<Tab>('channels');
 
   const [teams, setTeams] = useState<GraphTeam[]>([]);
   const [channels, setChannels] = useState<GraphChannel[]>([]);
-  const [chats, setChats] = useState<GraphChat[]>([]);
   const [messages, setMessages] = useState<GraphMessage[]>([]);
 
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
-  const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
 
   const [selectedTeamName, setSelectedTeamName] = useState('');
   const [selectedChannelName, setSelectedChannelName] = useState('');
-  const [selectedChatName, setSelectedChatName] = useState('');
 
   const loadSignedInState = useCallback(async () => {
     setLoading(true);
@@ -64,9 +55,6 @@ function TeamsGraphTestApp() {
 
       const teamsResponse = await getJoinedTeams();
       setTeams(teamsResponse.value);
-
-      const chatsResponse = await getChats();
-      setChats(chatsResponse.value);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setSignedIn(false);
@@ -115,20 +103,6 @@ function TeamsGraphTestApp() {
     }
   };
 
-  const handleSelectChat = async (chat: GraphChat) => {
-    setError(null);
-    setSelectedChatId(chat.id);
-    setSelectedChatName(chat.topic ?? chat.chatType);
-    setMessages([]);
-
-    try {
-      const response = await getChatMessages(chat.id);
-      setMessages(response.value);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
   return (
     <div className="teams-test">
       <header className="teams-test__header">
@@ -166,115 +140,72 @@ function TeamsGraphTestApp() {
       )}
 
       {!loading && signedIn && (
-        <>
-          <div className="teams-test__tabs">
-            <button
-              type="button"
-              className={tab === 'channels' ? 'active' : ''}
-              onClick={() => setTab('channels')}
-            >
-              Teams &amp; Channels
-            </button>
-            <button
-              type="button"
-              className={tab === 'chats' ? 'active' : ''}
-              onClick={() => setTab('chats')}
-            >
-              Chats
-            </button>
-          </div>
+        <div className="teams-test__layout">
+          <aside className="teams-test__panel">
+            <h2>Teams</h2>
+            <ul>
+              {teams.map((team) => (
+                <li key={team.id}>
+                  <button
+                    type="button"
+                    className={selectedTeamId === team.id ? 'selected' : ''}
+                    onClick={() => handleSelectTeam(team)}
+                  >
+                    {team.displayName}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </aside>
 
-          <div className="teams-test__layout">
-            {tab === 'channels' ? (
-              <>
-                <aside className="teams-test__panel">
-                  <h2>Teams</h2>
-                  <ul>
-                    {teams.map((team) => (
-                      <li key={team.id}>
-                        <button
-                          type="button"
-                          className={selectedTeamId === team.id ? 'selected' : ''}
-                          onClick={() => handleSelectTeam(team)}
-                        >
-                          {team.displayName}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </aside>
-
-                <aside className="teams-test__panel">
-                  <h2>Channels</h2>
-                  {selectedTeamId ? (
-                    <ul>
-                      {channels.map((channel) => (
-                        <li key={channel.id}>
-                          <button
-                            type="button"
-                            className={selectedChannelId === channel.id ? 'selected' : ''}
-                            onClick={() => handleSelectChannel(channel)}
-                          >
-                            {channel.displayName}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="teams-test__hint">Select a team</p>
-                  )}
-                </aside>
-              </>
+          <aside className="teams-test__panel">
+            <h2>Channels</h2>
+            {selectedTeamId ? (
+              <ul>
+                {channels.map((channel) => (
+                  <li key={channel.id}>
+                    <button
+                      type="button"
+                      className={selectedChannelId === channel.id ? 'selected' : ''}
+                      onClick={() => handleSelectChannel(channel)}
+                    >
+                      {channel.displayName}
+                    </button>
+                  </li>
+                ))}
+              </ul>
             ) : (
-              <aside className="teams-test__panel teams-test__panel--wide">
-                <h2>Chats</h2>
-                <ul>
-                  {chats.map((chat) => (
-                    <li key={chat.id}>
-                      <button
-                        type="button"
-                        className={selectedChatId === chat.id ? 'selected' : ''}
-                        onClick={() => handleSelectChat(chat)}
-                      >
-                        {chat.topic ?? chat.chatType}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </aside>
+              <p className="teams-test__hint">Select a team</p>
             )}
+          </aside>
 
-            <main className="teams-test__messages">
-              <h2>
-                Messages
-                {tab === 'channels' && selectedChannelName
-                  ? ` — ${selectedTeamName} / ${selectedChannelName}`
-                  : ''}
-                {tab === 'chats' && selectedChatName ? ` — ${selectedChatName}` : ''}
-              </h2>
+          <main className="teams-test__messages">
+            <h2>
+              Messages
+              {selectedChannelName
+                ? ` — ${selectedTeamName} / ${selectedChannelName}`
+                : ''}
+            </h2>
 
-              {messages.length === 0 ? (
-                <p className="teams-test__hint">
-                  {tab === 'channels'
-                    ? 'Select a team and channel to load messages'
-                    : 'Select a chat to load messages'}
-                </p>
-              ) : (
-                <ul className="teams-test__message-list">
-                  {messages.map((message) => (
-                    <li key={message.id} className="teams-test__message">
-                      <div className="teams-test__message-meta">
-                        <strong>{message.from?.user?.displayName ?? 'Unknown'}</strong>
-                        <span>{new Date(message.createdDateTime).toLocaleString()}</span>
-                      </div>
-                      <p>{stripHtml(message.body?.content ?? '')}</p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </main>
-          </div>
-        </>
+            {messages.length === 0 ? (
+              <p className="teams-test__hint">
+                Select a team and channel to load messages
+              </p>
+            ) : (
+              <ul className="teams-test__message-list">
+                {messages.map((message) => (
+                  <li key={message.id} className="teams-test__message">
+                    <div className="teams-test__message-meta">
+                      <strong>{message.from?.user?.displayName ?? 'Unknown'}</strong>
+                      <span>{new Date(message.createdDateTime).toLocaleString()}</span>
+                    </div>
+                    <p>{stripHtml(message.body?.content ?? '')}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </main>
+        </div>
       )}
     </div>
   );
