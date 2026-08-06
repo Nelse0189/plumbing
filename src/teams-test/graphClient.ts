@@ -1,6 +1,11 @@
 import { acquireToken } from './auth';
 
 async function graphFetch<T>(path: string): Promise<T> {
+  const response = await graphRequest(path);
+  return response.json() as Promise<T>;
+}
+
+async function graphRequest(path: string): Promise<Response> {
   const token = await acquireToken();
   const response = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
     headers: {
@@ -13,7 +18,7 @@ async function graphFetch<T>(path: string): Promise<T> {
     throw new Error(`${response.status} ${response.statusText}: ${body}`);
   }
 
-  return response.json() as Promise<T>;
+  return response;
 }
 
 export interface GraphTeam {
@@ -45,6 +50,14 @@ export interface GraphMessage {
   body?: {
     content?: string;
   };
+  attachments?: GraphAttachment[];
+}
+
+export interface GraphAttachment {
+  id: string;
+  contentType?: string;
+  contentUrl?: string;
+  name?: string;
 }
 
 interface ListResponse<T> {
@@ -65,6 +78,63 @@ export function getChannelMessages(teamId: string, channelId: string) {
   return graphFetch<ListResponse<GraphMessage>>(
     `/teams/${teamId}/channels/${channelId}/messages?$top=25`
   );
+}
+
+function getDriveRelativePath(contentUrl: string) {
+  const pathname = decodeURIComponent(new URL(contentUrl).pathname);
+  const documentLibrary = '/Shared Documents/';
+  const index = pathname.toLowerCase().indexOf(documentLibrary.toLowerCase());
+
+  if (index === -1) {
+    throw new Error('The attachment is not in the team Shared Documents library.');
+  }
+
+  return pathname.slice(index + documentLibrary.length);
+}
+
+function getSharingToken(contentUrl: string) {
+  const bytes = new TextEncoder().encode(contentUrl);
+  let binary = '';
+
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+
+  return `u!${btoa(binary)
+    .replace(/=+$/, '')
+    .replace(/\//g, '_')
+    .replace(/\+/g, '-')}`;
+}
+
+export async function downloadChannelAttachment(
+  teamId: string,
+  attachment: GraphAttachment
+) {
+  if (!attachment.contentUrl) {
+    throw new Error('This attachment does not include a download URL.');
+  }
+
+  try {
+    const relativePath = getDriveRelativePath(attachment.contentUrl);
+    const encodedPath = relativePath
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/');
+    const response = await graphRequest(
+      `/groups/${teamId}/drive/root:/${encodedPath}:/content`
+    );
+    return response.arrayBuffer();
+  } catch (driveError) {
+    try {
+      const sharingToken = getSharingToken(attachment.contentUrl);
+      const response = await graphRequest(
+        `/shares/${sharingToken}/driveItem/content`
+      );
+      return response.arrayBuffer();
+    } catch {
+      throw driveError;
+    }
+  }
 }
 
 export function getChats() {

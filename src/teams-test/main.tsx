@@ -7,16 +7,25 @@ import {
   signOut,
 } from './auth';
 import {
+  downloadChannelAttachment,
   getChannelMessages,
   getJoinedTeams,
   getMe,
   getTeamChannels,
+  type GraphAttachment,
   type GraphChannel,
   type GraphMessage,
   type GraphTeam,
 } from './graphClient';
+import { extractPdfText } from './pdf';
 import '../index.css';
 import './teams-test.css';
+
+interface PdfResult {
+  loading?: boolean;
+  text?: string;
+  error?: string;
+}
 
 function stripHtml(html: string) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -32,6 +41,7 @@ function TeamsGraphTestApp() {
   const [teams, setTeams] = useState<GraphTeam[]>([]);
   const [channels, setChannels] = useState<GraphChannel[]>([]);
   const [messages, setMessages] = useState<GraphMessage[]>([]);
+  const [pdfResults, setPdfResults] = useState<Record<string, PdfResult>>({});
 
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
@@ -100,6 +110,35 @@ function TeamsGraphTestApp() {
       setMessages(response.value);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleReadPdf = async (
+    messageId: string,
+    attachment: GraphAttachment
+  ) => {
+    if (!selectedTeamId) return;
+
+    const key = `${messageId}:${attachment.id}`;
+    setPdfResults((current) => ({
+      ...current,
+      [key]: { loading: true },
+    }));
+
+    try {
+      const data = await downloadChannelAttachment(selectedTeamId, attachment);
+      const text = await extractPdfText(data);
+      setPdfResults((current) => ({
+        ...current,
+        [key]: { text: text || 'No readable text was found in this PDF.' },
+      }));
+    } catch (err) {
+      setPdfResults((current) => ({
+        ...current,
+        [key]: {
+          error: err instanceof Error ? err.message : String(err),
+        },
+      }));
     }
   };
 
@@ -200,6 +239,52 @@ function TeamsGraphTestApp() {
                       <span>{new Date(message.createdDateTime).toLocaleString()}</span>
                     </div>
                     <p>{stripHtml(message.body?.content ?? '')}</p>
+                    {message.attachments
+                      ?.filter(
+                        (attachment) =>
+                          attachment.name?.toLowerCase().endsWith('.pdf') ||
+                          attachment.contentType === 'application/pdf'
+                      )
+                      .map((attachment) => {
+                        const key = `${message.id}:${attachment.id}`;
+                        const result = pdfResults[key];
+
+                        return (
+                          <div key={attachment.id} className="teams-test__attachment">
+                            <div className="teams-test__attachment-header">
+                              <span>PDF: {attachment.name ?? 'Attachment'}</span>
+                              <button
+                                type="button"
+                                disabled={result?.loading}
+                                onClick={() => handleReadPdf(message.id, attachment)}
+                              >
+                                {result?.loading
+                                  ? 'Reading…'
+                                  : result?.text
+                                    ? 'Read again'
+                                    : 'Read PDF'}
+                              </button>
+                            </div>
+                            {attachment.contentUrl && (
+                              <a
+                                href={attachment.contentUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Open in Teams / SharePoint
+                              </a>
+                            )}
+                            {result?.error && (
+                              <p className="teams-test__attachment-error">
+                                {result.error}
+                              </p>
+                            )}
+                            {result?.text && (
+                              <pre className="teams-test__pdf-text">{result.text}</pre>
+                            )}
+                          </div>
+                        );
+                      })}
                   </li>
                 ))}
               </ul>

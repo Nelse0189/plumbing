@@ -14,6 +14,7 @@ export const graphScopes = [
   'Team.ReadBasic.All',
   'Channel.ReadBasic.All',
   'ChannelMessage.Read.All',
+  'Files.Read',
 ];
 
 export const msalInstance = new PublicClientApplication({
