@@ -225,6 +225,52 @@
   font-size: 0.8rem;
 }
 
+.teams-test__job-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.teams-test__job-column {
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+}
+
+.teams-test__job-column h3 {
+  margin-bottom: 0.75rem;
+  color: var(--accent);
+  font-size: 0.9rem;
+  text-transform: capitalize;
+}
+
+.teams-test__job-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.teams-test__job-card span {
+  color: var(--text-secondary);
+}
+
+.teams-test__job-card button {
+  margin-top: 0.4rem;
+}
+
+.teams-test__job-card .teams-test__job-status {
+  color: var(--success);
+}
+
 .teams-test__work-order {
   margin-bottom: 1rem;
   padding: 1rem;
@@ -284,6 +330,10 @@
 
 @media (max-width: 900px) {
   .teams-test__layout {
+    grid-template-columns: 1fr;
+  }
+
+  .teams-test__job-columns {
     grid-template-columns: 1fr;
   }
 

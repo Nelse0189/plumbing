@@ -22,9 +22,11 @@ import { extractPdfText } from './pdf';
 import WorkOrderReview from './WorkOrderReview';
 import {
   extractWorkOrder as extractStructuredWorkOrder,
+  initiateWorkOrderScheduling,
+  listWorkOrders,
   saveWorkOrder,
 } from '../services/workOrderService';
-import type { WorkOrder } from '../types';
+import type { StoredWorkOrder, WorkOrder } from '../types';
 import '../index.css';
 import './teams-test.css';
 
@@ -37,7 +39,6 @@ interface PdfResult {
 interface ProcessedWorkOrder {
   workOrder: WorkOrder;
   status: 'draft' | 'saving' | 'saved';
-  reminderQueued?: boolean;
   error?: string;
 }
 
@@ -62,12 +63,31 @@ function TeamsGraphTestApp() {
   const [processedWorkOrders, setProcessedWorkOrders] = useState<
     Record<string, ProcessedWorkOrder>
   >({});
+  const [storedWorkOrders, setStoredWorkOrders] = useState<StoredWorkOrder[]>([]);
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [queueError, setQueueError] = useState<string | null>(null);
+  const [schedulingWorkOrderId, setSchedulingWorkOrderId] = useState<string | null>(
+    null
+  );
 
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
 
   const [selectedTeamName, setSelectedTeamName] = useState('');
   const [selectedChannelName, setSelectedChannelName] = useState('');
+
+  const refreshWorkOrders = useCallback(async (showLoading = false) => {
+    if (!getActiveAccount()) return;
+    if (showLoading) setQueueLoading(true);
+    setQueueError(null);
+    try {
+      setStoredWorkOrders(await listWorkOrders(await acquireToken()));
+    } catch (err) {
+      setQueueError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (showLoading) setQueueLoading(false);
+    }
+  }, []);
 
   const loadSignedInState = useCallback(async () => {
     setLoading(true);
@@ -85,13 +105,14 @@ function TeamsGraphTestApp() {
 
       const teamsResponse = await getJoinedTeams();
       setTeams(teamsResponse.value);
+      await refreshWorkOrders();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setSignedIn(false);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [refreshWorkOrders]);
 
   useEffect(() => {
     handleRedirectPromise()
@@ -101,6 +122,14 @@ function TeamsGraphTestApp() {
         setLoading(false);
       });
   }, [loadSignedInState]);
+
+  useEffect(() => {
+    if (!signedIn) return;
+    const timer = window.setInterval(() => {
+      void refreshWorkOrders();
+    }, 10000);
+    return () => window.clearInterval(timer);
+  }, [refreshWorkOrders, signedIn]);
 
   const handleSelectTeam = async (team: GraphTeam) => {
     setError(null);
@@ -217,19 +246,16 @@ function TeamsGraphTestApp() {
     }));
 
     try {
-      const result = await saveWorkOrder(
-        processed.workOrder,
-        await acquireToken()
-      );
+      await saveWorkOrder(processed.workOrder, await acquireToken());
       setProcessedWorkOrders((current) => ({
         ...current,
         [key]: {
           ...current[key],
           status: 'saved',
-          reminderQueued: result.reminderQueued,
           error: undefined,
         },
       }));
+      await refreshWorkOrders();
     } catch (err) {
       setProcessedWorkOrders((current) => ({
         ...current,
@@ -242,10 +268,34 @@ function TeamsGraphTestApp() {
     }
   };
 
+  const handleScheduleWorkOrder = async (workOrderId: string) => {
+    setSchedulingWorkOrderId(workOrderId);
+    setQueueError(null);
+    try {
+      const result = await initiateWorkOrderScheduling(
+        workOrderId,
+        await acquireToken()
+      );
+      await refreshWorkOrders();
+      if (result.alreadyPending) {
+        setQueueError(
+          `A test scheduling conversation is already waiting for a reply at ${result.testRecipient}.`
+        );
+      }
+    } catch (err) {
+      setQueueError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSchedulingWorkOrderId(null);
+    }
+  };
+
   const exportWorkOrdersCsv = () => {
-    const records = Object.values(processedWorkOrders).map(
-      (processed) => processed.workOrder
-    );
+    const records =
+      storedWorkOrders.length > 0
+        ? storedWorkOrders
+        : Object.values(processedWorkOrders).map(
+            (processed) => processed.workOrder
+          );
     const columns: Array<keyof WorkOrder> = [
       'workOrderNumber',
       'customerName',
@@ -451,6 +501,107 @@ function TeamsGraphTestApp() {
             </main>
           </div>
 
+          <section className="teams-test__processed">
+            <div className="teams-test__processed-header">
+              <div>
+                <h2>Scheduling database</h2>
+                <p>
+                  Scheduling texts are routed only to +1 860-964-3025 during
+                  testing.
+                </p>
+              </div>
+              <div className="teams-test__attachment-actions">
+                <button
+                  type="button"
+                  disabled={queueLoading}
+                  onClick={() => refreshWorkOrders(true)}
+                >
+                  {queueLoading ? 'Refreshing…' : 'Refresh jobs'}
+                </button>
+                {storedWorkOrders.length > 0 && (
+                  <button type="button" onClick={exportWorkOrdersCsv}>
+                    Export CSV
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {queueError && <div className="teams-test__error">{queueError}</div>}
+
+            <div className="teams-test__job-columns">
+              {(['unscheduled', 'scheduling', 'scheduled'] as const).map(
+                (status) => {
+                  const jobs = storedWorkOrders.filter(
+                    (workOrder) => workOrder.status === status
+                  );
+                  return (
+                    <div key={status} className="teams-test__job-column">
+                      <h3>
+                        {status === 'unscheduled'
+                          ? 'Unscheduled'
+                          : status === 'scheduling'
+                            ? 'Awaiting text reply'
+                            : 'Scheduled'}{' '}
+                        ({jobs.length})
+                      </h3>
+                      {jobs.length === 0 ? (
+                        <p className="teams-test__hint">No jobs</p>
+                      ) : (
+                        jobs.map((workOrder) => (
+                          <article
+                            key={workOrder.id}
+                            className="teams-test__job-card"
+                          >
+                            <strong>WO {workOrder.workOrderNumber}</strong>
+                            <span>{workOrder.customerName}</span>
+                            <span>{workOrder.jobType}</span>
+                            <span>
+                              {workOrder.appointmentDate}
+                              {workOrder.appointmentTime
+                                ? ` at ${workOrder.appointmentTime}`
+                                : ''}
+                            </span>
+                            <span>{workOrder.address}</span>
+                            <span>
+                              Customer phone on file: {workOrder.phone}
+                            </span>
+                            {status === 'unscheduled' && (
+                              <button
+                                type="button"
+                                disabled={
+                                  schedulingWorkOrderId === workOrder.id
+                                }
+                                onClick={() =>
+                                  handleScheduleWorkOrder(workOrder.id)
+                                }
+                              >
+                                {schedulingWorkOrderId === workOrder.id
+                                  ? 'Sending test text…'
+                                  : 'Schedule by text'}
+                              </button>
+                            )}
+                            {status === 'scheduling' && (
+                              <span className="teams-test__job-status">
+                                Waiting for a reply from the test phone
+                              </span>
+                            )}
+                            {status === 'scheduled' && (
+                              <span className="teams-test__job-status">
+                                Confirmed for{' '}
+                                {workOrder.selectedTime ||
+                                  workOrder.appointmentTime}
+                              </span>
+                            )}
+                          </article>
+                        ))
+                      )}
+                    </div>
+                  );
+                }
+              )}
+            </div>
+          </section>
+
           {Object.keys(processedWorkOrders).length > 0 && (
             <section className="teams-test__processed">
               <div className="teams-test__processed-header">
@@ -470,7 +621,6 @@ function TeamsGraphTestApp() {
                   key={key}
                   workOrder={processed.workOrder}
                   status={processed.status}
-                  reminderQueued={processed.reminderQueued}
                   error={processed.error}
                   onChange={(workOrder) =>
                     setProcessedWorkOrders((current) => ({

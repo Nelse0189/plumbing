@@ -42,6 +42,12 @@ export interface WorkOrder {
   confidence?: number;
 }
 
+export interface StoredWorkOrder extends WorkOrder {
+  id: string;
+  status: 'unscheduled' | 'scheduling' | 'scheduled';
+  selectedTime?: string;
+}
+
 
 
 

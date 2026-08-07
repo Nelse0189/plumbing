@@ -1,7 +1,7 @@
 import { getApps, initializeApp } from 'firebase/app';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { firebaseConfig } from '../firebase/config';
-import type { WorkOrder } from '../types';
+import type { StoredWorkOrder, WorkOrder } from '../types';
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 const functions = getFunctions(app);
@@ -29,19 +29,52 @@ export async function saveWorkOrder(
 ): Promise<{
   success: boolean;
   workOrderId: string;
-  reminderQueued: boolean;
-  confirmationScheduledFor: string | null;
+  status: 'unscheduled';
 }> {
   const callable = httpsCallable<
     { workOrder: WorkOrder; microsoftAccessToken: string },
     {
       success: boolean;
       workOrderId: string;
-      reminderQueued: boolean;
-      confirmationScheduledFor: string | null;
+      status: 'unscheduled';
     }
   >(functions, 'saveWorkOrder');
   const result = await callable({ workOrder, microsoftAccessToken });
+  return result.data;
+}
+
+export async function listWorkOrders(
+  microsoftAccessToken: string
+): Promise<StoredWorkOrder[]> {
+  const callable = httpsCallable<
+    { microsoftAccessToken: string },
+    StoredWorkOrder[]
+  >(functions, 'listWorkOrders');
+  const result = await callable({ microsoftAccessToken });
+  return result.data;
+}
+
+export async function initiateWorkOrderScheduling(
+  workOrderId: string,
+  microsoftAccessToken: string
+): Promise<{
+  success: boolean;
+  alreadyPending?: boolean;
+  messageSid?: string;
+  testRecipient: string;
+  availableTimeSlots?: string[];
+}> {
+  const callable = httpsCallable<
+    { workOrderId: string; microsoftAccessToken: string },
+    {
+      success: boolean;
+      alreadyPending?: boolean;
+      messageSid?: string;
+      testRecipient: string;
+      availableTimeSlots?: string[];
+    }
+  >(functions, 'initiateWorkOrderScheduling');
+  const result = await callable({ workOrderId, microsoftAccessToken });
   return result.data;
 }
 

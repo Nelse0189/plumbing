@@ -3,7 +3,6 @@ import type { WorkOrder } from '../types';
 interface WorkOrderReviewProps {
   workOrder: WorkOrder;
   status?: 'draft' | 'saving' | 'saved';
-  reminderQueued?: boolean;
   error?: string;
   onChange: (workOrder: WorkOrder) => void;
   onSave: () => void;
@@ -28,7 +27,6 @@ const fields: Array<{
 export default function WorkOrderReview({
   workOrder,
   status = 'draft',
-  reminderQueued,
   error,
   onChange,
   onSave,
@@ -51,7 +49,8 @@ export default function WorkOrderReview({
 
       <p className="teams-test__review-warning">
         Verify the customer, phone number, job date, and job type before saving.
-        Saving adds the job to the schedule and queues its morning text.
+        Saving adds the job to the unscheduled queue and does not text the
+        customer.
       </p>
 
       <div className="teams-test__work-order-grid">
@@ -94,10 +93,8 @@ export default function WorkOrderReview({
         {status === 'saving'
           ? 'Saving…'
           : status === 'saved'
-            ? reminderQueued
-              ? 'Saved & reminder queued'
-              : 'Saved (no SMS queued)'
-            : 'Approve and schedule'}
+            ? 'Saved as unscheduled'
+            : 'Save to unscheduled jobs'}
       </button>
     </article>
   );

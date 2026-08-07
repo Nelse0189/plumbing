@@ -1,8 +1,8 @@
 # Teams Work Order Automation
 
 This workflow turns PDF work orders attached to Microsoft Teams channel messages
-into reviewed schedule entries, morning customer reminders, and CSV records that
-can be opened in Google Sheets.
+into reviewed unscheduled jobs, SMS-assisted schedule entries, and CSV records
+that can be opened in Google Sheets.
 
 ## Workflow
 
@@ -14,10 +14,12 @@ can be opened in Google Sheets.
    function. OpenAI returns structured fields.
 5. A staff member verifies the work-order number, customer, phone, address, job
    type, date, and time.
-6. A staff member records whether the customer authorized transactional SMS.
-7. **Approve and schedule** saves the structured work order, adds it to the
-   schedule, and queues a morning reminder only when SMS consent is checked.
-8. **Export CSV for Google Sheets** downloads all reviewed rows in a
+6. **Save to unscheduled jobs** stores the reviewed record without contacting
+   anyone.
+7. **Schedule by text** sends available times only to `SMS_TEST_RECIPIENT`.
+8. A reply selecting a valid time moves the work order into the scheduled
+   database and truck schedule.
+9. **Export CSV for Google Sheets** downloads all reviewed rows in a
    Sheets-compatible format.
 
 AI output is never scheduled automatically. Human review is required because
@@ -57,10 +59,9 @@ MICROSOFT_TENANT_ID=your-entra-tenant-id
 TWILIO_ACCOUNT_SID=...
 TWILIO_AUTH_TOKEN=...
 TWILIO_PHONE_NUMBER=+1...
+SMS_TEST_RECIPIENT=+18609643025
 
 COMPANY_NAME=Your Plumbing Company
-BUSINESS_TIME_ZONE=America/New_York
-MORNING_REMINDER_HOUR=8
 ```
 
 `OPENAI_API_KEY` and Twilio credentials are server secrets. Never put them in a
@@ -92,12 +93,15 @@ function that uses them, and store their values in Firebase Secret Manager.
 - Verify the extracted phone number and appointment date before saving.
 - Restrict Firestore and application access because work orders contain
   customer personal information.
+- While test mode is enabled, all outbound scheduling and reminder messages are
+  routed to `SMS_TEST_RECIPIENT`; customer phone numbers are stored but not used
+  as message destinations.
 
 ## Current limitations
 
 - Image-only/scanned PDFs require OCR; text PDFs are supported now.
 - CSV export is compatible with Google Sheets but does not write directly into a
   Google Sheet.
-- Functions must be deployed before AI extraction and reminder queueing work.
+- Functions must be deployed before AI extraction and SMS scheduling work.
 - Firebase Authentication/App Check and production Firestore security rules
   should be added before exposing the application broadly.
