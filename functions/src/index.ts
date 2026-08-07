@@ -387,8 +387,9 @@ export const listWorkOrders = onCall(
 
 function getAvailableTimeSlots(scheduleData: admin.firestore.DocumentData | undefined) {
   const bookedTimes = new Set<string>();
-  if (Array.isArray(scheduleData?.trucks)) {
-    for (const truck of scheduleData.trucks) {
+  const trucks = scheduleData?.trucks;
+  if (Array.isArray(trucks)) {
+    for (const truck of trucks) {
       if (!Array.isArray(truck.stops)) continue;
       for (const stop of truck.stops) {
         if (typeof stop.time === "string") bookedTimes.add(stop.time);
