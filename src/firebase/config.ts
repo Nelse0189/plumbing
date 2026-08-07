@@ -2,13 +2,13 @@ import { initializeApp, getApps } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
 export const firebaseConfig = {
-  apiKey: "AIzaSyCeovABoXmIHVC2CPK-S2R2uX0Y09PM_Xc",
-  authDomain: "njplu-94cdd.firebaseapp.com",
-  projectId: "njplu-94cdd",
-  storageBucket: "njplu-94cdd.firebasestorage.app",
-  messagingSenderId: "273915227146",
-  appId: "1:273915227146:web:47cd572d8cce085fb203f3",
-  measurementId: "G-PW142KMQGM"
+  apiKey: "AIzaSyC-fvIUi24DLEZt83zBEy9mYt-cTeWrN4Y",
+  authDomain: "nj-plumbing.firebaseapp.com",
+  projectId: "nj-plumbing",
+  storageBucket: "nj-plumbing.firebasestorage.app",
+  messagingSenderId: "158919600954",
+  appId: "1:158919600954:web:c0f23f81ff9b9e52883e03",
+  measurementId: "G-TENWETD263"
 };
 
 // Initialize Firebase
