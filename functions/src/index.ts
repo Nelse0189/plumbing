@@ -40,6 +40,12 @@ const strSmsTestRecipient = defineString("SMS_TEST_RECIPIENT", {
   default: "+18609643025",
 });
 const strCompanyName = defineString("COMPANY_NAME", { default: "Your plumbing company" });
+const strDispatchOriginAddress = defineString("DISPATCH_ORIGIN_ADDRESS", {
+  default: "216 Berlin Lane, Berlin, CT",
+});
+const strDispatchMorningHour = defineString("DISPATCH_MORNING_HOUR", {
+  default: "7",
+});
 const strMicrosoftTenantId = defineString("MICROSOFT_TENANT_ID", { default: "" });
 const strGmailEmail = defineString("GMAIL_EMAIL", { default: "" });
 const strGmailClientId = defineString("GMAIL_CLIENT_ID", { default: "" });
@@ -733,6 +739,8 @@ export const handleSMSReply = onRequest(
                   { id: "truck1", name: "Truck 1", stops: [] },
                   { id: "truck2", name: "Truck 2", stops: [] },
                   { id: "truck3", name: "Truck 3", stops: [] },
+                  { id: "truck4", name: "Truck 4", stops: [] },
+                  { id: "truck5", name: "Truck 5", stops: [] },
                 ];
             const stop = {
               id: requestData.workOrderId,
@@ -938,12 +946,21 @@ export const sendMorningConfirmations = onSchedule(
         }
 
         const appointmentTime = confirmation.appointmentTime
-          ? ` at ${confirmation.appointmentTime}`
+          ? ` between ${confirmation.appointmentTime}`
           : "";
         const jobType = confirmation.jobType
           ? ` for ${confirmation.jobType}`
           : "";
-        const confirmationMessage = `Good morning ${confirmation.customerName || ""}! ${strCompanyName.value()} is reminding you about your plumbing appointment today${appointmentTime}${jobType}. Reply CONFIRM if available or call to reschedule. Reply STOP to opt out.`;
+        const address = confirmation.address
+          ? ` at ${confirmation.address}`
+          : "";
+        const testPrefix =
+          confirmation.testing === true || confirmation.source === "dispatch"
+            ? "TEST: "
+            : "";
+        const confirmationMessage = `Good morning ${
+          confirmation.customerName || ""
+        }! ${testPrefix}${strCompanyName.value()} is reminding you about your plumbing appointment today${appointmentTime}${jobType}${address}. Reply CONFIRM if available or call to reschedule. Reply STOP to opt out.`;
 
         await twilioClient.messages.create({
           body: confirmationMessage,
@@ -961,6 +978,147 @@ export const sendMorningConfirmations = onSchedule(
         console.error(
           `Error sending morning confirmation to ${confirmation.phoneNumber}:`,
           error
+        );
+      }
+    }
+  }
+);
+
+function easternWallTimeToIso(dateYmd: string, hour: number, minute = 0): string {
+  const timeZone = "America/New_York";
+  const utcGuess = Date.UTC(
+    Number(dateYmd.slice(0, 4)),
+    Number(dateYmd.slice(5, 7)) - 1,
+    Number(dateYmd.slice(8, 10)),
+    hour,
+    minute,
+    0
+  );
+
+  const asLocal = (millis: number) => {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(new Date(millis));
+    const get = (type: string) =>
+      parts.find((part) => part.type === type)?.value || "0";
+    return Date.UTC(
+      Number(get("year")),
+      Number(get("month")) - 1,
+      Number(get("day")),
+      Number(get("hour")) % 24,
+      Number(get("minute")),
+      Number(get("second"))
+    );
+  };
+
+  const offset = asLocal(utcGuess) - utcGuess;
+  return new Date(utcGuess - offset).toISOString();
+}
+
+function formatDispatchWindowLabel(start: string, end: string): string {
+  const formatClock = (hhmm: string) => {
+    const [hourText, minuteText = "00"] = hhmm.split(":");
+    const hour = Number.parseInt(hourText, 10);
+    if (Number.isNaN(hour)) return hhmm;
+    const meridiem = hour >= 12 ? "PM" : "AM";
+    const twelve = hour % 12 === 0 ? 12 : hour % 12;
+    return minuteText === "00"
+      ? `${twelve} ${meridiem}`
+      : `${twelve}:${minuteText} ${meridiem}`;
+  };
+  return `${formatClock(start)}–${formatClock(end)}`;
+}
+
+/**
+ * Safety net: for today's Set dispatch trucks, ensure morning window texts
+ * are queued. Outbound SMS still route to SMS_TEST_RECIPIENT.
+ */
+export const ensureDispatchMorningTexts = onSchedule(
+  {
+    schedule: "every 15 minutes",
+    timeZone: "America/New_York",
+  },
+  async () => {
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+
+    const planDoc = await admin
+      .firestore()
+      .collection("dispatchPlans")
+      .doc(today)
+      .get();
+    if (!planDoc.exists) return;
+
+    const plan = planDoc.data() as {
+      originAddress?: string;
+      trucks?: Array<{
+        id: string;
+        set?: boolean;
+        stops?: Array<Record<string, unknown>>;
+      }>;
+    };
+
+    const morningHour = Number.parseInt(strDispatchMorningHour.value(), 10);
+    const confirmationTime = easternWallTimeToIso(
+      today,
+      Number.isFinite(morningHour) ? morningHour : 7,
+      0
+    );
+    const origin = plan.originAddress || strDispatchOriginAddress.value();
+    void origin;
+
+    const trucks = Array.isArray(plan.trucks) ? plan.trucks : [];
+    for (const truck of trucks) {
+      if (!truck.set || !Array.isArray(truck.stops)) continue;
+      for (const stop of truck.stops) {
+        const stopId = asTrimmedString(stop.id) || asTrimmedString(stop.workOrderId);
+        if (!stopId) continue;
+        const docId = `dispatch-${today}-${truck.id}-${stopId}`.slice(0, 700);
+        const ref = admin.firestore().collection("morningConfirmations").doc(docId);
+        const existing = await ref.get();
+        if (existing.exists) {
+          const status = asTrimmedString(existing.data()?.status);
+          if (status === "pending" || status === "sent") continue;
+        }
+
+        const window = (stop.window || {}) as { start?: string; end?: string };
+        const windowStart = asTrimmedString(window.start) || "08:00";
+        const windowEnd = asTrimmedString(window.end) || "12:00";
+
+        await ref.set(
+          {
+            phoneNumber: asTrimmedString(stop.phone),
+            customerPhoneNumber: asTrimmedString(stop.phone),
+            customerName: asTrimmedString(stop.customerName),
+            address: asTrimmedString(stop.address),
+            jobType: asTrimmedString(stop.jobType),
+            appointmentTime: formatDispatchWindowLabel(windowStart, windowEnd),
+            windowStart,
+            windowEnd,
+            confirmationTime,
+            status: "pending",
+            testing: true,
+            source: "dispatch",
+            dispatchDate: today,
+            truckId: truck.id,
+            stopId,
+            workOrderId: asTrimmedString(stop.workOrderId) || stopId,
+            originAddress: origin,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
         );
       }
     }

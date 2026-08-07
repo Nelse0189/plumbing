@@ -97,6 +97,35 @@ function that uses them, and store their values in Firebase Secret Manager.
   routed to `SMS_TEST_RECIPIENT`; customer phone numbers are stored but not used
   as message destinations.
 
+## CT Dispatch board
+
+The main app **Dispatch** tab is a 5-truck Connecticut day board:
+
+1. Work orders for the selected date appear as **Not Ready** (no notes on the
+   PDF/doc) or **Ready / Unassigned** (notes present).
+2. Drag jobs onto trucks and reorder stops. Default route order is farthest from
+   the depot (`DISPATCH_ORIGIN_ADDRESS`, default `216 Berlin Lane, Berlin, CT`)
+   first; higher **Priority** overrides distance.
+3. Default arrival windows by stop position (plumber can edit any window):
+   - 1st: 8 AM–12 PM
+   - 2nd: 10 AM–2 PM
+   - 3rd: 12 PM–4 PM
+   - then +2 hours start for later stops
+4. **Set** locks the truck and queues morning window texts for
+   `DISPATCH_MORNING_HOUR` Eastern (default 7 AM). Texts still go only to
+   `SMS_TEST_RECIPIENT` until customer sending is enabled.
+5. **Reopen** unlocks the truck and cancels pending morning texts.
+
+Frontend optional vars (`.env.local`):
+
+```env
+VITE_DISPATCH_ORIGIN_ADDRESS=216 Berlin Lane, Berlin, CT
+VITE_DISPATCH_MORNING_HOUR=7
+VITE_GOOGLE_MAPS_API_KEY=...
+```
+
+`VITE_GOOGLE_MAPS_API_KEY` enables distance ordering from the depot.
+
 ## Current limitations
 
 - Image-only/scanned PDFs require OCR; text PDFs are supported now.

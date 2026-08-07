@@ -48,6 +48,52 @@ export interface StoredWorkOrder extends WorkOrder {
   selectedTime?: string;
 }
 
+/** 4-hour arrival window shown to the customer (HH:MM, 24h). */
+export interface ArrivalWindow {
+  start: string;
+  end: string;
+}
+
+export interface DispatchStop {
+  id: string;
+  workOrderId: string;
+  workOrderNumber: string;
+  customerName: string;
+  phone: string;
+  address: string;
+  jobType: string;
+  notes: string;
+  sourceFileName?: string;
+  /** Higher priority runs earlier than distance order. */
+  priority: number;
+  window: ArrivalWindow;
+  /** When true, reordering will not overwrite the plumber-edited window. */
+  customWindow: boolean;
+  distanceMiles?: number | null;
+  lat?: number;
+  lng?: number;
+  morningTextStatus?: 'none' | 'queued' | 'sent' | 'failed';
+}
+
+export interface DispatchTruck {
+  id: string;
+  name: string;
+  driver?: string;
+  /** Locked route — morning texts queue from this plan. */
+  set: boolean;
+  setAt?: string;
+  stops: DispatchStop[];
+}
+
+export interface DispatchPlan {
+  date: string;
+  originAddress: string;
+  trucks: DispatchTruck[];
+  unassigned: DispatchStop[];
+  notReady: DispatchStop[];
+  updatedAt?: string;
+}
+
 
 
 
