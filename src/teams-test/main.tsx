@@ -137,7 +137,9 @@ function TeamsGraphTestApp() {
     messageId: string,
     attachment: GraphAttachment
   ): Promise<string> => {
-    if (!selectedTeamId) throw new Error('Select a team first.');
+    if (!selectedTeamId || !selectedChannelId) {
+      throw new Error('Select a team and channel first.');
+    }
 
     const key = `${messageId}:${attachment.id}`;
     setPdfResults((current) => ({
@@ -146,7 +148,11 @@ function TeamsGraphTestApp() {
     }));
 
     try {
-      const data = await downloadChannelAttachment(selectedTeamId, attachment);
+      const data = await downloadChannelAttachment(
+        selectedTeamId,
+        selectedChannelId,
+        attachment
+      );
       const text = await extractPdfText(data);
       const readableText = text || 'No readable text was found in this PDF.';
       setPdfResults((current) => ({

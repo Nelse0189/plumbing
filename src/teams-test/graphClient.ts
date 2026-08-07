@@ -15,7 +15,9 @@ async function graphRequest(path: string): Promise<Response> {
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`${response.status} ${response.statusText}: ${body}`);
+    throw new Error(
+      `Graph request failed for ${path}: ${response.status} ${response.statusText}: ${body}`
+    );
   }
 
   return response;
@@ -58,6 +60,14 @@ export interface GraphAttachment {
   contentType?: string;
   contentUrl?: string;
   name?: string;
+}
+
+interface ChannelFilesFolder {
+  id: string;
+  webUrl?: string;
+  parentReference?: {
+    driveId?: string;
+  };
 }
 
 interface ListResponse<T> {
@@ -106,35 +116,96 @@ function getSharingToken(contentUrl: string) {
     .replace(/\+/g, '-')}`;
 }
 
+function encodeGraphPath(path: string) {
+  return path
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+function getPathRelativeToFolder(
+  contentUrl: string,
+  folderWebUrl: string | undefined,
+  fallbackName: string | undefined
+) {
+  if (folderWebUrl) {
+    const attachmentPath = decodeURIComponent(new URL(contentUrl).pathname);
+    const folderPath = decodeURIComponent(new URL(folderWebUrl).pathname).replace(
+      /\/$/,
+      ''
+    );
+    if (attachmentPath.toLowerCase().startsWith(`${folderPath.toLowerCase()}/`)) {
+      return attachmentPath.slice(folderPath.length + 1);
+    }
+  }
+
+  if (fallbackName) return fallbackName;
+  throw new Error('Could not determine the attachment path in the channel drive.');
+}
+
 export async function downloadChannelAttachment(
   teamId: string,
+  channelId: string,
   attachment: GraphAttachment
 ) {
   if (!attachment.contentUrl) {
     throw new Error('This attachment does not include a download URL.');
   }
 
+  const failures: Error[] = [];
+
   try {
-    const relativePath = getDriveRelativePath(attachment.contentUrl);
-    const encodedPath = relativePath
-      .split('/')
-      .map((segment) => encodeURIComponent(segment))
-      .join('/');
+    const folder = await graphFetch<ChannelFilesFolder>(
+      `/teams/${teamId}/channels/${channelId}/filesFolder`
+    );
+    const driveId = folder.parentReference?.driveId;
+    if (!driveId) {
+      throw new Error('The channel files folder did not include a drive ID.');
+    }
+
+    const relativePath = getPathRelativeToFolder(
+      attachment.contentUrl,
+      folder.webUrl,
+      attachment.name
+    );
     const response = await graphRequest(
-      `/groups/${teamId}/drive/root:/${encodedPath}:/content`
+      `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(
+        folder.id
+      )}:/${encodeGraphPath(relativePath)}:/content`
     );
     return response.arrayBuffer();
-  } catch (driveError) {
-    try {
-      const sharingToken = getSharingToken(attachment.contentUrl);
-      const response = await graphRequest(
-        `/shares/${sharingToken}/driveItem/content`
-      );
-      return response.arrayBuffer();
-    } catch {
-      throw driveError;
-    }
+  } catch (error) {
+    failures.push(error instanceof Error ? error : new Error(String(error)));
   }
+
+  try {
+    const relativePath = getDriveRelativePath(attachment.contentUrl);
+    const response = await graphRequest(
+      `/groups/${teamId}/drive/root:/${encodeGraphPath(relativePath)}:/content`
+    );
+    return response.arrayBuffer();
+  } catch (error) {
+    failures.push(error instanceof Error ? error : new Error(String(error)));
+  }
+
+  try {
+    const sharingToken = getSharingToken(attachment.contentUrl);
+    const response = await graphRequest(
+      `/shares/${sharingToken}/driveItem/content`
+    );
+    return response.arrayBuffer();
+  } catch (error) {
+    failures.push(error instanceof Error ? error : new Error(String(error)));
+  }
+
+  if (failures.some((failure) => failure.message.includes('403'))) {
+    throw new Error(
+      'Microsoft Graph denied access to this channel file (403). Confirm delegated Files.Read.All is granted by an administrator, then sign out and back in.'
+    );
+  }
+
+  throw new Error(failures.map((failure) => failure.message).join('\n'));
 }
 
 export function getChats() {

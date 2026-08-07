@@ -31,8 +31,13 @@ User.Read
 Team.ReadBasic.All
 Channel.ReadBasic.All
 ChannelMessage.Read.All
-Files.Read
+Files.Read.All
 ```
+
+`Files.Read.All` is required to resolve the actual document library behind a
+Teams channel through the Graph `filesFolder` API. Access remains delegated: the
+app still acts as the signed-in user and cannot read files that user cannot
+access.
 
 ## Environment configuration
 
