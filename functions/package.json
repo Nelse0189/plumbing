@@ -23,6 +23,7 @@
     "formidable": "^3.5.0",
     "googleapis": "^128.0.0",
     "mailparser": "^3.6.5",
+    "openai": "^7.4.0",
     "twilio": "^5.3.5"
   },
   "devDependencies": {

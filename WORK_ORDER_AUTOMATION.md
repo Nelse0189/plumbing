@@ -11,7 +11,7 @@ can be opened in Google Sheets.
 3. The PDF is downloaded from the team's SharePoint drive and its text is
    extracted locally in the browser.
 4. The text—not the PDF file—is sent to the `extractWorkOrder` Firebase callable
-   function. Gemini returns structured fields.
+   function. OpenAI returns structured fields.
 5. A staff member verifies the work-order number, customer, phone, address, job
    type, date, and time.
 6. A staff member records whether the customer authorized transactional SMS.
@@ -50,8 +50,8 @@ cp functions/.env.example functions/.env
 Fill in:
 
 ```env
-GEMINI_API_KEY=...
-WORK_ORDER_AI_MODEL=gemini-3-flash-preview
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-5-mini
 MICROSOFT_TENANT_ID=your-entra-tenant-id
 
 TWILIO_ACCOUNT_SID=...
@@ -63,7 +63,7 @@ BUSINESS_TIME_ZONE=America/New_York
 MORNING_REMINDER_HOUR=8
 ```
 
-`GEMINI_API_KEY` and Twilio credentials are server secrets. Never put them in a
+`OPENAI_API_KEY` and Twilio credentials are server secrets. Never put them in a
 `VITE_` variable, browser code, or source control. Vite variables are bundled
 into public JavaScript.
 
