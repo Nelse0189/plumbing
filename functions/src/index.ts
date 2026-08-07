@@ -12,7 +12,6 @@ import { defineString } from "firebase-functions/params";
 import { setGlobalOptions } from "firebase-functions/v2";
 import { onCall, onRequest, HttpsError } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import { fromZonedTime } from "date-fns-tz";
 import type { Response } from "express";
 
 dotenv.config();
@@ -37,14 +36,11 @@ const strGmailClientSecret = defineString("GMAIL_CLIENT_SECRET", { default: "" }
 const strGmailRefreshToken = defineString("GMAIL_REFRESH_TOKEN", { default: "" });
 const strTwilioAccountSid = defineString("TWILIO_ACCOUNT_SID", { default: "" });
 const strTwilioPhoneNumber = defineString("TWILIO_PHONE_NUMBER", { default: "" });
+const strSmsTestRecipient = defineString("SMS_TEST_RECIPIENT", {
+  default: "+18609643025",
+});
 const strCompanyName = defineString("COMPANY_NAME", { default: "Your plumbing company" });
-const strBusinessTimeZone = defineString("BUSINESS_TIME_ZONE", {
-  default: "America/New_York",
-});
 const strMicrosoftTenantId = defineString("MICROSOFT_TENANT_ID", { default: "" });
-const strMorningReminderHour = defineString("MORNING_REMINDER_HOUR", {
-  default: "8",
-});
 const strGmailEmail = defineString("GMAIL_EMAIL", { default: "" });
 const strGmailClientId = defineString("GMAIL_CLIENT_ID", { default: "" });
 const strGmailRedirectUri = defineString("GMAIL_REDIRECT_URI", {
@@ -326,115 +322,208 @@ export const saveWorkOrder = onCall(
     const safeNumber = workOrder.workOrderNumber.replace(/[^a-zA-Z0-9_-]/g, "-");
     const recordId = `${workOrder.appointmentDate}-${safeNumber}`.slice(0, 120);
     const recordRef = db.collection("workOrders").doc(recordId);
-    const scheduleRef = db.collection("schedules").doc(workOrder.appointmentDate);
-    const confirmationRef = db.collection("morningConfirmations").doc(recordId);
-    const timeZone = strBusinessTimeZone.value();
-    const parsedHour = Number.parseInt(strMorningReminderHour.value(), 10);
-    const reminderHour = Number.isFinite(parsedHour)
-      ? Math.min(23, Math.max(0, parsedHour))
-      : 8;
-    const confirmationTime = fromZonedTime(
-      `${workOrder.appointmentDate}T${String(reminderHour).padStart(2, "0")}:00:00`,
-      timeZone
+    await recordRef.set(
+      {
+        ...workOrder,
+        importedByMicrosoftUserId: microsoftUser.id,
+        importedBy: microsoftUser.userPrincipalName || "",
+        status: "unscheduled",
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
     );
-
-    await db.runTransaction(async (transaction) => {
-      const [scheduleDoc, confirmationDoc] = await Promise.all([
-        transaction.get(scheduleRef),
-        transaction.get(confirmationRef),
-      ]);
-      const scheduleData = scheduleDoc.data();
-      const storedTrucks =
-        scheduleData && Array.isArray(scheduleData.trucks)
-          ? scheduleData.trucks
-          : null;
-      const existingTrucks: Record<string, unknown>[] = storedTrucks
-        ? (storedTrucks as Record<string, unknown>[])
-        : [
-            { id: "truck1", name: "Truck 1", stops: [] },
-            { id: "truck2", name: "Truck 2", stops: [] },
-            { id: "truck3", name: "Truck 3", stops: [] },
-          ];
-
-      const stop = {
-        id: recordId,
-        workOrderNumber: workOrder.workOrderNumber,
-        customerName: workOrder.customerName,
-        phone: workOrder.phone,
-        address: workOrder.address,
-        jobType: workOrder.jobType,
-        time: workOrder.appointmentTime || "08:00",
-        notes: workOrder.notes,
-        sourceFileName: workOrder.sourceFileName,
-      };
-
-      let foundExistingStop = false;
-      const trucks = existingTrucks.map((truck: Record<string, unknown>) => {
-        const stops = Array.isArray(truck.stops) ? truck.stops : [];
-        const updatedStops = stops.map((existingStop: Record<string, unknown>) => {
-          if (
-            existingStop.workOrderNumber === workOrder.workOrderNumber ||
-            existingStop.id === recordId
-          ) {
-            foundExistingStop = true;
-            return { ...existingStop, ...stop };
-          }
-          return existingStop;
-        });
-        return { ...truck, stops: updatedStops };
-      });
-
-      if (!foundExistingStop) {
-        const firstTruck = trucks[0] as Record<string, unknown>;
-        const firstStops = Array.isArray(firstTruck.stops) ? firstTruck.stops : [];
-        trucks[0] = { ...firstTruck, stops: [...firstStops, stop] };
-      }
-
-      transaction.set(
-        recordRef,
-        {
-          ...workOrder,
-          importedByMicrosoftUserId: microsoftUser.id,
-          importedBy: microsoftUser.userPrincipalName || "",
-          status: "scheduled",
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-      transaction.set(
-        scheduleRef,
-        {
-          date: workOrder.appointmentDate,
-          trucks,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      if (workOrder.smsConsent && !confirmationDoc.exists) {
-        transaction.set(confirmationRef, {
-          workOrderId: recordId,
-          workOrderNumber: workOrder.workOrderNumber,
-          phoneNumber: workOrder.phone,
-          customerName: workOrder.customerName,
-          address: workOrder.address,
-          jobType: workOrder.jobType,
-          appointmentDate: workOrder.appointmentDate,
-          appointmentTime: workOrder.appointmentTime,
-          confirmationTime: confirmationTime.toISOString(),
-          status: "pending",
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      }
-    });
 
     return {
       success: true,
       workOrderId: recordId,
-      reminderQueued: workOrder.smsConsent,
-      confirmationScheduledFor: workOrder.smsConsent
-        ? confirmationTime.toISOString()
-        : null,
+      status: "unscheduled",
+    };
+  }
+);
+
+export const listWorkOrders = onCall(
+  {
+    cors: true,
+  },
+  async (request) => {
+    const input = request.data as { microsoftAccessToken?: unknown };
+    await requireMicrosoftUser(input.microsoftAccessToken);
+
+    const snapshot = await admin
+      .firestore()
+      .collection("workOrders")
+      .limit(250)
+      .get();
+
+    return snapshot.docs
+      .map((document) => {
+        const data = document.data();
+        return {
+          id: document.id,
+          workOrderNumber: asTrimmedString(data.workOrderNumber),
+          customerName: asTrimmedString(data.customerName),
+          phone: asTrimmedString(data.phone),
+          address: asTrimmedString(data.address),
+          jobType: asTrimmedString(data.jobType),
+          appointmentDate: asTrimmedString(data.appointmentDate),
+          appointmentTime: asTrimmedString(data.appointmentTime),
+          notes: asTrimmedString(data.notes),
+          sourceFileName: asTrimmedString(data.sourceFileName),
+          smsConsent: data.smsConsent === true,
+          confidence:
+            typeof data.confidence === "number" ? data.confidence : undefined,
+          status: asTrimmedString(data.status) || "unscheduled",
+          selectedTime: asTrimmedString(data.selectedTime),
+        };
+      })
+      .sort((left, right) =>
+        `${left.appointmentDate}-${left.appointmentTime}`.localeCompare(
+          `${right.appointmentDate}-${right.appointmentTime}`
+        )
+      );
+  }
+);
+
+function getAvailableTimeSlots(scheduleData: admin.firestore.DocumentData | undefined) {
+  const bookedTimes = new Set<string>();
+  if (Array.isArray(scheduleData?.trucks)) {
+    for (const truck of scheduleData.trucks) {
+      if (!Array.isArray(truck.stops)) continue;
+      for (const stop of truck.stops) {
+        if (typeof stop.time === "string") bookedTimes.add(stop.time);
+      }
+    }
+  }
+
+  const slots: string[] = [];
+  for (let hour = 8; hour <= 17; hour += 1) {
+    const slot = `${String(hour).padStart(2, "0")}:00`;
+    if (!bookedTimes.has(slot)) slots.push(slot);
+  }
+  return slots;
+}
+
+export const initiateWorkOrderScheduling = onCall(
+  {
+    cors: true,
+  },
+  async (request) => {
+    const input = request.data as {
+      workOrderId?: unknown;
+      microsoftAccessToken?: unknown;
+    };
+    await requireMicrosoftUser(input.microsoftAccessToken);
+    const workOrderId = asTrimmedString(input.workOrderId);
+    if (!workOrderId) {
+      throw new HttpsError("invalid-argument", "Work order ID is required");
+    }
+
+    const testRecipient = normalizeUsPhone(strSmsTestRecipient.value());
+    if (!/^\+\d{10,15}$/.test(testRecipient)) {
+      throw new HttpsError(
+        "failed-precondition",
+        "SMS_TEST_RECIPIENT is not configured"
+      );
+    }
+    if (
+      !strTwilioAccountSid.value() ||
+      !strTwilioAuthToken.value() ||
+      !strTwilioPhoneNumber.value()
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Twilio credentials are not configured"
+      );
+    }
+
+    const db = admin.firestore();
+    const recordRef = db.collection("workOrders").doc(workOrderId);
+    const recordDoc = await recordRef.get();
+    if (!recordDoc.exists) {
+      throw new HttpsError("not-found", "Work order was not found");
+    }
+    const workOrder = recordDoc.data() as Record<string, unknown>;
+    if (workOrder.status === "scheduled") {
+      throw new HttpsError("failed-precondition", "Work order is already scheduled");
+    }
+
+    const pendingSnapshot = await db
+      .collection("schedulingRequests")
+      .where("phoneNumber", "==", testRecipient)
+      .where("status", "==", "pending")
+      .limit(1)
+      .get();
+    if (!pendingSnapshot.empty) {
+      const pendingData = pendingSnapshot.docs[0].data();
+      if (pendingData.workOrderId === workOrderId) {
+        return {
+          success: true,
+          alreadyPending: true,
+          testRecipient,
+        };
+      }
+      throw new HttpsError(
+        "failed-precondition",
+        "Finish the current test SMS conversation before scheduling another work order"
+      );
+    }
+
+    const appointmentDate = asTrimmedString(workOrder.appointmentDate);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(appointmentDate)) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Review and save a valid requested job date first"
+      );
+    }
+    const scheduleDoc = await db.collection("schedules").doc(appointmentDate).get();
+    const availableTimeSlots = getAvailableTimeSlots(scheduleDoc.data());
+    if (availableTimeSlots.length === 0) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "No scheduling slots remain for this date"
+      );
+    }
+
+    const message = `${strCompanyName.value()} TEST scheduling for work order ${asTrimmedString(
+      workOrder.workOrderNumber
+    )}, ${asTrimmedString(workOrder.customerName)}. Available on ${appointmentDate}: ${availableTimeSlots.join(
+      ", "
+    )}. Reply with the preferred time. Messages are routed only to this test number.`;
+    const twilioMessage = await makeTwilioClient().messages.create({
+      body: message,
+      from: strTwilioPhoneNumber.value(),
+      to: testRecipient,
+    });
+
+    const requestRef = db.collection("schedulingRequests").doc(workOrderId);
+    await db.runTransaction(async (transaction) => {
+      transaction.set(requestRef, {
+        workOrderId,
+        phoneNumber: testRecipient,
+        customerPhoneNumber: asTrimmedString(workOrder.phone),
+        customerName: asTrimmedString(workOrder.customerName),
+        address: asTrimmedString(workOrder.address),
+        jobType: asTrimmedString(workOrder.jobType),
+        date: appointmentDate,
+        availableTimeSlots,
+        status: "pending",
+        testing: true,
+        twilioMessageSid: twilioMessage.sid,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      transaction.update(recordRef, {
+        status: "scheduling",
+        schedulingStartedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    return {
+      success: true,
+      messageSid: twilioMessage.sid,
+      testRecipient,
+      availableTimeSlots,
     };
   }
 );
@@ -454,31 +543,19 @@ export const initiateScheduling = onCall(
       }
 
       const timeSlotsText = availableTimeSlots.join(", ");
-
-      const genAI = new GoogleGenerativeAI(strGeminiApiKey.value());
-      const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
-      const prompt = `You are a friendly plumbing company assistant. Create a short, professional SMS message (under 160 characters) to schedule a water heater appointment. 
-
-Customer: ${customerName}
-Address: ${address}
-Date: ${date}
-Available time slots: ${timeSlotsText}
-
-Create a friendly message asking them to reply with their preferred time slot.`;
-
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const message = response.text();
+      const testRecipient = normalizeUsPhone(strSmsTestRecipient.value());
+      const message = `${strCompanyName.value()} TEST scheduling for ${customerName} at ${address} on ${date}. Available times: ${timeSlotsText}. Reply with the preferred time.`;
 
       const twilioClient = makeTwilioClient();
       const twilioMessage = await twilioClient.messages.create({
         body: message,
         from: strTwilioPhoneNumber.value(),
-        to: phoneNumber,
+        to: testRecipient,
       });
 
       await admin.firestore().collection("schedulingRequests").add({
-        phoneNumber,
+        phoneNumber: testRecipient,
+        customerPhoneNumber: phoneNumber,
         customerName,
         address,
         date,
@@ -496,6 +573,73 @@ Create a friendly message asking them to reply with their preferred time slot.`;
     }
   }
 );
+
+async function parseSchedulingReply(
+  messageBody: string,
+  availableTimeSlots: string[]
+): Promise<{ selectedTime: string; intent: string }> {
+  const normalized = messageBody.toLowerCase().replace(/\s+/g, " ");
+  for (const slot of availableTimeSlots) {
+    const [hourText] = slot.split(":");
+    const hour = Number.parseInt(hourText, 10);
+    const twelveHour = hour > 12 ? hour - 12 : hour;
+    const meridiem = hour >= 12 ? "pm" : "am";
+    const candidates = [
+      slot,
+      `${twelveHour} ${meridiem}`,
+      `${twelveHour}${meridiem}`,
+      `${twelveHour}:00 ${meridiem}`,
+    ];
+    if (candidates.some((candidate) => normalized.includes(candidate))) {
+      return { selectedTime: slot, intent: "select_time" };
+    }
+  }
+
+  const result = await new OpenAI({
+    apiKey: strOpenAiApiKey.value(),
+  }).chat.completions.create({
+    model: strOpenAiModel.value(),
+    messages: [
+      {
+        role: "system",
+        content:
+          "Interpret a customer's plumbing appointment scheduling reply. Select only a time from the supplied availability. Do not invent a time.",
+      },
+      {
+        role: "user",
+        content: `Available times: ${availableTimeSlots.join(
+          ", "
+        )}\nCustomer reply: ${messageBody}`,
+      },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "scheduling_reply",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            selectedTime: { type: "string" },
+            intent: {
+              type: "string",
+              enum: ["select_time", "reschedule", "cancel", "unclear"],
+            },
+          },
+          required: ["selectedTime", "intent"],
+        },
+      },
+    },
+  });
+  const content = result.choices[0]?.message.content;
+  if (!content) return { selectedTime: "", intent: "unclear" };
+  const parsed = parseJsonObject(content);
+  return {
+    selectedTime: asTrimmedString(parsed.selectedTime),
+    intent: asTrimmedString(parsed.intent) || "unclear",
+  };
+}
 
 export const handleSMSReply = onRequest(
   {
@@ -532,7 +676,6 @@ export const handleSMSReply = onRequest(
         .collection("schedulingRequests")
         .where("phoneNumber", "==", fromNumber)
         .where("status", "==", "pending")
-        .orderBy("createdAt", "desc")
         .limit(1)
         .get();
 
@@ -543,59 +686,162 @@ export const handleSMSReply = onRequest(
 
       const requestDoc = requestsSnapshot.docs[0];
       const requestData = requestDoc.data();
-
-      const genAI = new GoogleGenerativeAI(strGeminiApiKey.value());
-      const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
-      const prompt = `The customer replied: "${messageBody}"
-
-Available time slots: ${requestData.availableTimeSlots.join(", ")}
-
-Extract the time slot they want. If they didn't specify a time, suggest the first available slot. Respond with ONLY the time slot in HH:MM format (24-hour), or "unclear" if you can't determine.`;
-
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const selectedTime = response.text().trim();
+      const availableTimeSlots = Array.isArray(requestData.availableTimeSlots)
+        ? requestData.availableTimeSlots.filter(
+            (slot: unknown): slot is string => typeof slot === "string"
+          )
+        : [];
+      const parsedReply = await parseSchedulingReply(
+        asTrimmedString(messageBody),
+        availableTimeSlots
+      );
+      const selectedTime = parsedReply.selectedTime;
 
       const twilioClient = makeTwilioClient();
       const fromNumberPhone = strTwilioPhoneNumber.value();
 
       if (
-        selectedTime !== "unclear" &&
-        requestData.availableTimeSlots.includes(selectedTime)
+        parsedReply.intent === "select_time" &&
+        availableTimeSlots.includes(selectedTime)
       ) {
-        const confirmationMessage = `Great! We've scheduled your water heater appointment for ${requestData.date} at ${selectedTime}. We'll send you a reminder 1 hour before.`;
+        if (requestData.workOrderId) {
+          const db = admin.firestore();
+          const workOrderRef = db
+            .collection("workOrders")
+            .doc(requestData.workOrderId);
+          const scheduleRef = db.collection("schedules").doc(requestData.date);
 
-        await twilioClient.messages.create({
-          body: confirmationMessage,
-          from: fromNumberPhone,
-          to: fromNumber,
-        });
+          await db.runTransaction(async (transaction) => {
+            const [workOrderDoc, scheduleDoc] = await Promise.all([
+              transaction.get(workOrderRef),
+              transaction.get(scheduleRef),
+            ]);
+            if (!workOrderDoc.exists) {
+              throw new Error("Work order no longer exists");
+            }
 
-        await requestDoc.ref.update({
-          status: "confirmed",
-          selectedTime,
-          confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
+            const workOrder = workOrderDoc.data() as Record<string, unknown>;
+            const scheduleData = scheduleDoc.data();
+            const storedTrucks =
+              scheduleData && Array.isArray(scheduleData.trucks)
+                ? scheduleData.trucks
+                : null;
+            const trucks: Array<Record<string, unknown>> = storedTrucks
+              ? (storedTrucks as Array<Record<string, unknown>>)
+              : [
+                  { id: "truck1", name: "Truck 1", stops: [] },
+                  { id: "truck2", name: "Truck 2", stops: [] },
+                  { id: "truck3", name: "Truck 3", stops: [] },
+                ];
+            const stop = {
+              id: requestData.workOrderId,
+              workOrderNumber: asTrimmedString(workOrder.workOrderNumber),
+              customerName: asTrimmedString(workOrder.customerName),
+              phone: asTrimmedString(workOrder.phone),
+              address: asTrimmedString(workOrder.address),
+              jobType: asTrimmedString(workOrder.jobType),
+              time: selectedTime,
+              notes: asTrimmedString(workOrder.notes),
+              sourceFileName: asTrimmedString(workOrder.sourceFileName),
+            };
+            const alreadyScheduled = trucks.some((truck) =>
+              Array.isArray(truck.stops)
+                ? truck.stops.some(
+                    (existingStop: Record<string, unknown>) =>
+                      existingStop.id === requestData.workOrderId
+                  )
+                : false
+            );
 
-        const appointmentDateTime = new Date(
-          `${requestData.date}T${selectedTime}:00`
-        );
-        const reminderDateTime = new Date(
-          appointmentDateTime.getTime() - 60 * 60 * 1000
-        );
+            if (!alreadyScheduled) {
+              let targetIndex = 0;
+              let smallestStopCount = Number.POSITIVE_INFINITY;
+              trucks.forEach((truck, index) => {
+                const stopCount = Array.isArray(truck.stops)
+                  ? truck.stops.length
+                  : 0;
+                if (stopCount < smallestStopCount) {
+                  targetIndex = index;
+                  smallestStopCount = stopCount;
+                }
+              });
+              const targetTruck = trucks[targetIndex];
+              const targetStops = Array.isArray(targetTruck.stops)
+                ? targetTruck.stops
+                : [];
+              trucks[targetIndex] = {
+                ...targetTruck,
+                stops: [...targetStops, stop],
+              };
+            }
 
-        await admin.firestore().collection("reminders").add({
-          phoneNumber: fromNumber,
-          customerName: requestData.customerName,
-          address: requestData.address,
-          appointmentDate: requestData.date,
-          appointmentTime: selectedTime,
-          reminderTime: reminderDateTime.toISOString(),
-          status: "pending",
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
+            transaction.set(
+              scheduleRef,
+              {
+                date: requestData.date,
+                trucks,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true }
+            );
+            transaction.update(workOrderRef, {
+              status: "scheduled",
+              appointmentTime: selectedTime,
+              selectedTime,
+              scheduledAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            transaction.update(requestDoc.ref, {
+              status: "confirmed",
+              selectedTime,
+              confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          });
+
+          const confirmationMessage = `TEST complete: work order ${requestData.workOrderId} is scheduled for ${requestData.date} at ${selectedTime}. The real customer number was not contacted.`;
+          await twilioClient.messages.create({
+            body: confirmationMessage,
+            from: fromNumberPhone,
+            to: fromNumber,
+          });
+        } else {
+          const confirmationMessage = `TEST: appointment scheduled for ${requestData.date} at ${selectedTime}. The real customer number was not contacted.`;
+
+          await twilioClient.messages.create({
+            body: confirmationMessage,
+            from: fromNumberPhone,
+            to: fromNumber,
+          });
+
+          await requestDoc.ref.update({
+            status: "confirmed",
+            selectedTime,
+            confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+
+          const appointmentDateTime = new Date(
+            `${requestData.date}T${selectedTime}:00`
+          );
+          const reminderDateTime = new Date(
+            appointmentDateTime.getTime() - 60 * 60 * 1000
+          );
+
+          await admin.firestore().collection("reminders").add({
+            phoneNumber: strSmsTestRecipient.value(),
+            customerName: requestData.customerName,
+            address: requestData.address,
+            appointmentDate: requestData.date,
+            appointmentTime: selectedTime,
+            reminderTime: reminderDateTime.toISOString(),
+            status: "pending",
+            testing: true,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
       } else {
-        const clarificationMessage = `Could you please specify your preferred time? Available slots: ${requestData.availableTimeSlots.join(", ")}`;
+        const clarificationMessage = `TEST scheduling: please reply with one available time: ${availableTimeSlots.join(
+          ", "
+        )}. The real customer number was not contacted.`;
 
         await twilioClient.messages.create({
           body: clarificationMessage,
@@ -640,7 +886,7 @@ export const sendReminders = onSchedule(
         await twilioClient.messages.create({
           body: reminderMessage,
           from: fromPhone,
-          to: reminder.phoneNumber,
+          to: strSmsTestRecipient.value(),
         });
 
         await reminderDoc.ref.update({
@@ -701,7 +947,7 @@ export const sendMorningConfirmations = onSchedule(
         await twilioClient.messages.create({
           body: confirmationMessage,
           from: fromPhone,
-          to: confirmation.phoneNumber,
+          to: strSmsTestRecipient.value(),
         });
 
         await confirmationDoc.ref.update({
