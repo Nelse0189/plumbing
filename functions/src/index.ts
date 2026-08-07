@@ -333,6 +333,21 @@ export const saveWorkOrder = onCall(
         ...workOrder,
         importedByMicrosoftUserId: microsoftUser.id,
         importedBy: microsoftUser.userPrincipalName || "",
+        smsConsentMethod: workOrder.smsConsent
+          ? "verbal_scheduling_call"
+          : "not_provided",
+        smsConsentDisclosureVersion: workOrder.smsConsent
+          ? "nj-plumbing-verbal-v1.0"
+          : "",
+        smsConsentRecordedByMicrosoftUserId: workOrder.smsConsent
+          ? microsoftUser.id
+          : "",
+        smsConsentRecordedBy: workOrder.smsConsent
+          ? microsoftUser.userPrincipalName || ""
+          : "",
+        smsConsentRecordedAt: workOrder.smsConsent
+          ? admin.firestore.FieldValue.serverTimestamp()
+          : null,
         status: "unscheduled",
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),

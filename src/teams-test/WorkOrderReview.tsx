@@ -83,9 +83,15 @@ export default function WorkOrderReview({
           }
         />
         <span>
-          Customer has authorized transactional appointment text messages
+          Customer said “Yes” to the NJ Plumbing verbal SMS script (v1.0)
         </span>
       </label>
+      <p className="teams-test__hint">
+        Ask: “May NJ Plumbing send you automated text messages about
+        scheduling, reminders, and arrival windows for this job? Message
+        frequency varies. Message and data rates may apply. Reply STOP to opt
+        out. Consent is not required to receive service. Is that okay?”
+      </p>
 
       {error && <p className="teams-test__attachment-error">{error}</p>}
 
