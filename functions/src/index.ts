@@ -1051,6 +1051,360 @@ function formatDispatchWindowLabel(start: string, end: string): string {
   return `${formatClock(start)}–${formatClock(end)}`;
 }
 
+type VoiceCallStatus =
+  | "queued"
+  | "ringing"
+  | "answered"
+  | "completed"
+  | "failed"
+  | "no-answer";
+type VoiceConfirmationResponse = "confirmed" | "declined" | "unknown";
+
+interface VoiceConfirmationRecord {
+  dispatchDate: string;
+  truckId: string;
+  stopId: string;
+  workOrderId: string;
+  customerName: string;
+  customerPhoneNumber: string;
+  address: string;
+  appointmentWindow: string;
+  windowStart: string;
+  windowEnd: string;
+  callStatus: VoiceCallStatus;
+  response?: VoiceConfirmationResponse;
+  responseDetails?: string;
+}
+
+function voiceConfirmationDocumentId(
+  dispatchDate: string,
+  truckId: string,
+  stopId: string
+): string {
+  return `voice-${dispatchDate}-${truckId}-${stopId}-${Date.now()}`.slice(0, 700);
+}
+
+async function updateDispatchStopVoiceFields(
+  dispatchDate: string,
+  truckId: string,
+  stopId: string,
+  fields: Record<string, unknown>
+) {
+  const planRef = admin.firestore().collection("dispatchPlans").doc(dispatchDate);
+  await admin.firestore().runTransaction(async (transaction) => {
+    const planDoc = await transaction.get(planRef);
+    if (!planDoc.exists) return;
+    const plan = planDoc.data() as { trucks?: Array<Record<string, unknown>> };
+    const trucks = Array.isArray(plan.trucks) ? plan.trucks : [];
+    const nextTrucks = trucks.map((truck) => {
+      if (asTrimmedString(truck.id) !== truckId) return truck;
+      const stops = Array.isArray(truck.stops)
+        ? (truck.stops as Array<Record<string, unknown>>)
+        : [];
+      return {
+        ...truck,
+        stops: stops.map((stop) =>
+          asTrimmedString(stop.id) === stopId ? { ...stop, ...fields } : stop
+        ),
+      };
+    });
+    transaction.update(planRef, {
+      trucks: nextTrucks,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  });
+}
+
+/**
+ * Starts a manual, temporary voice confirmation. Calls are deliberately
+ * redirected to SMS_TEST_RECIPIENT while the feature is being validated.
+ */
+export const initiateVoiceWindowConfirmation = onCall(
+  {
+    cors: true,
+  },
+  async (request) => {
+    const input = request.data as {
+      dispatchDate?: unknown;
+      truckId?: unknown;
+      stopId?: unknown;
+    };
+    const dispatchDate = asTrimmedString(input.dispatchDate);
+    const truckId = asTrimmedString(input.truckId);
+    const stopId = asTrimmedString(input.stopId);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dispatchDate) || !truckId || !stopId) {
+      throw new HttpsError(
+        "invalid-argument",
+        "A dispatch date, truck, and stop are required"
+      );
+    }
+
+    const testRecipient = normalizeUsPhone(strSmsTestRecipient.value());
+    if (!/^\+\d{10,15}$/.test(testRecipient)) {
+      throw new HttpsError(
+        "failed-precondition",
+        "SMS_TEST_RECIPIENT is not configured for voice testing"
+      );
+    }
+    if (
+      !strTwilioAccountSid.value() ||
+      !strTwilioAuthToken.value() ||
+      !strTwilioPhoneNumber.value()
+    ) {
+      throw new HttpsError("failed-precondition", "Twilio credentials are not configured");
+    }
+
+    const db = admin.firestore();
+    const planDoc = await db.collection("dispatchPlans").doc(dispatchDate).get();
+    if (!planDoc.exists) {
+      throw new HttpsError("not-found", "Dispatch plan was not found");
+    }
+    const plan = planDoc.data() as {
+      trucks?: Array<{ id?: unknown; stops?: Array<Record<string, unknown>> }>;
+    };
+    const truck = Array.isArray(plan.trucks)
+      ? plan.trucks.find((candidate) => asTrimmedString(candidate.id) === truckId)
+      : undefined;
+    const stop = truck?.stops?.find(
+      (candidate) => asTrimmedString(candidate.id) === stopId
+    );
+    if (!stop) {
+      throw new HttpsError("not-found", "Dispatch stop was not found");
+    }
+
+    const window = (stop.window || {}) as { start?: unknown; end?: unknown };
+    const windowStart = asTrimmedString(window.start) || "08:00";
+    const windowEnd = asTrimmedString(window.end) || "12:00";
+    const confirmationId = voiceConfirmationDocumentId(dispatchDate, truckId, stopId);
+    const confirmationRef = db.collection("voiceConfirmations").doc(confirmationId);
+    const windowLabel = formatDispatchWindowLabel(windowStart, windowEnd);
+
+    await confirmationRef.set({
+      dispatchDate,
+      truckId,
+      stopId,
+      workOrderId: asTrimmedString(stop.workOrderId) || stopId,
+      customerName: asTrimmedString(stop.customerName),
+      customerPhoneNumber: asTrimmedString(stop.phone),
+      address: asTrimmedString(stop.address),
+      appointmentWindow: windowLabel,
+      windowStart,
+      windowEnd,
+      testing: true,
+      routedTo: testRecipient,
+      callStatus: "queued",
+      response: "unknown",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    const functionBase =
+      "https://us-central1-nj-plumbing.cloudfunctions.net";
+    const query = `confirmationId=${encodeURIComponent(confirmationId)}`;
+    try {
+      const call = await makeTwilioClient().calls.create({
+        to: testRecipient,
+        from: normalizeUsPhone(strTwilioPhoneNumber.value()),
+        url: `${functionBase}/handleVoiceWindowCall?${query}`,
+        method: "POST",
+        statusCallback: `${functionBase}/handleVoiceWindowStatus?${query}`,
+        statusCallbackMethod: "POST",
+        statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
+      });
+      await confirmationRef.update({
+        twilioCallSid: call.sid,
+        callStatus: "queued",
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      await updateDispatchStopVoiceFields(dispatchDate, truckId, stopId, {
+        voiceCallStatus: "queued",
+        voiceConfirmationResponse: "unknown",
+        voiceConfirmationDetails: "Test call queued",
+      });
+      return {
+        success: true,
+        confirmationId,
+        callSid: call.sid,
+        testRecipient,
+        callStatus: "queued",
+      };
+    } catch (error) {
+      console.error("Could not start voice confirmation:", error);
+      await confirmationRef.update({
+        callStatus: "failed",
+        responseDetails: error instanceof Error ? error.message : String(error),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      await updateDispatchStopVoiceFields(dispatchDate, truckId, stopId, {
+        voiceCallStatus: "failed",
+        voiceConfirmationDetails: "Test call could not be started",
+      });
+      throw new HttpsError("internal", "Could not start the voice confirmation call");
+    }
+  }
+);
+
+export const handleVoiceWindowCall = onRequest(
+  {
+    invoker: "public",
+    cors: false,
+  },
+  async (req, res) => {
+    const confirmationId = asTrimmedString(req.query.confirmationId);
+    const confirmationDoc = confirmationId
+      ? await admin.firestore().collection("voiceConfirmations").doc(confirmationId).get()
+      : null;
+    const confirmation = confirmationDoc?.exists
+      ? (confirmationDoc.data() as VoiceConfirmationRecord)
+      : null;
+    const response = new twilio.twiml.VoiceResponse();
+
+    if (!confirmation) {
+      response.say("This confirmation is no longer available. Goodbye.");
+      response.hangup();
+    } else {
+      const gather = response.gather({
+        input: ["dtmf", "speech"],
+        numDigits: 1,
+        timeout: 7,
+        action: `https://us-central1-nj-plumbing.cloudfunctions.net/handleVoiceWindowResponse?confirmationId=${encodeURIComponent(
+          confirmationId
+        )}`,
+        method: "POST",
+      });
+      gather.say(
+        `This is a test call from ${strCompanyName.value()}. ` +
+          `For ${confirmation.customerName || "the customer"}, the arrival window is ` +
+          `${confirmation.appointmentWindow}. ` +
+          "Press 1 or say yes if this works. Press 2 or say no if it does not work."
+      );
+      response.redirect(
+        `https://us-central1-nj-plumbing.cloudfunctions.net/handleVoiceWindowResponse?confirmationId=${encodeURIComponent(
+          confirmationId
+        )}&noResponse=1`
+      );
+    }
+    res.type("text/xml").status(200).send(response.toString());
+  }
+);
+
+export const handleVoiceWindowResponse = onRequest(
+  {
+    invoker: "public",
+    cors: false,
+  },
+  async (req, res) => {
+    const confirmationId = asTrimmedString(req.query.confirmationId);
+    const ref = confirmationId
+      ? admin.firestore().collection("voiceConfirmations").doc(confirmationId)
+      : null;
+    const doc = ref ? await ref.get() : null;
+    const record = doc?.exists ? (doc.data() as VoiceConfirmationRecord) : null;
+    const voice = new twilio.twiml.VoiceResponse();
+
+    if (!record || !ref) {
+      voice.say("This confirmation is no longer available. Goodbye.");
+      voice.hangup();
+      res.type("text/xml").status(200).send(voice.toString());
+      return;
+    }
+
+    const digits = asTrimmedString(req.body?.Digits);
+    const speech = asTrimmedString(req.body?.SpeechResult).toLowerCase();
+    const noResponse = asTrimmedString(req.query.noResponse) === "1";
+    const confirmed = digits === "1" || /\b(yes|yeah|yep|confirm)\b/.test(speech);
+    const declined = digits === "2" || /\b(no|nope|decline|reschedule)\b/.test(speech);
+    const response: VoiceConfirmationResponse = confirmed
+      ? "confirmed"
+      : declined
+        ? "declined"
+        : "unknown";
+    const details = noResponse
+      ? "No keypad or speech response"
+      : digits
+        ? `Keypad response: ${digits}`
+        : speech
+          ? `Speech response: ${speech.slice(0, 200)}`
+          : "Unrecognized response";
+
+    await ref.update({
+      response,
+      responseDetails: details,
+      respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    await updateDispatchStopVoiceFields(
+      record.dispatchDate,
+      record.truckId,
+      record.stopId,
+      {
+        voiceConfirmationResponse: response,
+        voiceConfirmationDetails: details,
+        voiceConfirmationAt: new Date().toISOString(),
+      }
+    );
+
+    if (response === "confirmed") {
+      voice.say("Thank you. The arrival window has been confirmed. Goodbye.");
+    } else if (response === "declined") {
+      voice.say(
+        "Thank you. We recorded that this window does not work. Our scheduling team will follow up. Goodbye."
+      );
+    } else {
+      voice.say(
+        "We did not receive a clear answer. Our scheduling team will follow up. Goodbye."
+      );
+    }
+    voice.hangup();
+    res.type("text/xml").status(200).send(voice.toString());
+  }
+);
+
+export const handleVoiceWindowStatus = onRequest(
+  {
+    invoker: "public",
+    cors: false,
+  },
+  async (req, res) => {
+    const confirmationId = asTrimmedString(req.query.confirmationId);
+    const callStatus = asTrimmedString(req.body?.CallStatus) as VoiceCallStatus;
+    const allowedStatuses: VoiceCallStatus[] = [
+      "queued",
+      "ringing",
+      "answered",
+      "completed",
+      "failed",
+      "no-answer",
+    ];
+    if (confirmationId && allowedStatuses.includes(callStatus)) {
+      const ref = admin.firestore().collection("voiceConfirmations").doc(confirmationId);
+      const doc = await ref.get();
+      if (doc.exists) {
+        const record = doc.data() as VoiceConfirmationRecord;
+        await ref.update({
+          callStatus,
+          twilioCallSid: asTrimmedString(req.body?.CallSid),
+          callDuration: asTrimmedString(req.body?.CallDuration),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        await updateDispatchStopVoiceFields(
+          record.dispatchDate,
+          record.truckId,
+          record.stopId,
+          {
+            voiceCallStatus: callStatus,
+            voiceConfirmationDetails:
+              callStatus === "completed"
+                ? record.responseDetails || "Call completed; waiting for response"
+                : `Call status: ${callStatus}`,
+          }
+        );
+      }
+    }
+    res.status(204).send();
+  }
+);
+
 /**
  * Safety net: for today's Set dispatch trucks, ensure morning window texts
  * are queued. Outbound SMS still route to SMS_TEST_RECIPIENT.

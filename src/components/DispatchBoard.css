@@ -271,6 +271,27 @@
   color: var(--accent);
 }
 
+.dispatch-node__voice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--border);
+}
+
+.dispatch-node__voice button {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.68rem;
+  border-color: var(--success);
+}
+
+.dispatch-node__voice small {
+  color: var(--success);
+  font-size: 0.65rem;
+  line-height: 1.25;
+}
+
 @media (max-width: 1200px) {
   .dispatch-board__lanes {
     grid-template-columns: 1fr;

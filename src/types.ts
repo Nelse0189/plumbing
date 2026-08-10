@@ -73,6 +73,12 @@ export interface DispatchStop {
   lat?: number;
   lng?: number;
   morningTextStatus?: 'none' | 'queued' | 'sent' | 'failed';
+  /** Temporary test-call delivery state for the arrival-window confirmation. */
+  voiceCallStatus?: 'queued' | 'ringing' | 'answered' | 'completed' | 'failed' | 'no-answer';
+  /** Customer keypad/speech answer captured during the confirmation call. */
+  voiceConfirmationResponse?: 'confirmed' | 'declined' | 'unknown';
+  voiceConfirmationDetails?: string;
+  voiceConfirmationAt?: string;
 }
 
 export interface DispatchTruck {

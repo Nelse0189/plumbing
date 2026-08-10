@@ -13,6 +13,7 @@ import {
   DEFAULT_DISPATCH_ORIGIN,
   formatWindowLabel,
 } from '../utils/dispatchWindows';
+import { initiateVoiceWindowConfirmation } from '../services/voiceConfirmationService';
 import './DispatchBoard.css';
 
 interface DispatchBoardProps {
@@ -37,12 +38,16 @@ function StopNode({
   locked,
   onPriorityChange,
   onWindowChange,
+  onCallConfirmation,
+  calling,
   dragPayload,
 }: {
   stop: DispatchStop;
   locked: boolean;
   onPriorityChange?: (priority: number) => void;
   onWindowChange?: (start: string, end: string) => void;
+  onCallConfirmation?: () => void;
+  calling?: boolean;
   dragPayload: DragPayload;
 }) {
   return (
@@ -101,6 +106,32 @@ function StopNode({
             <small>{formatWindowLabel(stop.window)}{stop.customWindow ? ' (edited)' : ''}</small>
           </label>
         )}
+        {onCallConfirmation && (
+          <div className="dispatch-node__voice">
+            <button
+              type="button"
+              disabled={calling}
+              onClick={(event) => {
+                event.stopPropagation();
+                onCallConfirmation();
+              }}
+            >
+              {calling ? 'Calling test…' : 'Call test confirmation'}
+            </button>
+            {stop.voiceCallStatus && (
+              <small>
+                Call: {stop.voiceCallStatus}
+                {stop.voiceConfirmationResponse &&
+                stop.voiceConfirmationResponse !== 'unknown'
+                  ? ` · ${stop.voiceConfirmationResponse}`
+                  : ''}
+              </small>
+            )}
+            {stop.voiceConfirmationDetails && (
+              <small>{stop.voiceConfirmationDetails}</small>
+            )}
+          </div>
+        )}
       </div>
     </article>
   );
@@ -112,6 +143,7 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [callingStopId, setCallingStopId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -298,6 +330,49 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
     }
   };
 
+  const handleVoiceConfirmation = async (truck: DispatchTruck, stop: DispatchStop) => {
+    if (!plan) return;
+    setCallingStopId(stop.id);
+    setError(null);
+    try {
+      const result = await initiateVoiceWindowConfirmation(
+        plan.date,
+        truck.id,
+        stop.id
+      );
+      const next: DispatchPlan = {
+        ...plan,
+        trucks: plan.trucks.map((candidate) =>
+          candidate.id !== truck.id
+            ? candidate
+            : {
+                ...candidate,
+                stops: candidate.stops.map((candidateStop) =>
+                  candidateStop.id !== stop.id
+                    ? candidateStop
+                    : {
+                        ...candidateStop,
+                        voiceCallStatus: 'queued',
+                        voiceConfirmationResponse: 'unknown',
+                        voiceConfirmationDetails: 'Test call queued',
+                      }
+                ),
+              }
+        ),
+      };
+      setPlan(next);
+      setStatus(
+        `Test confirmation call queued to ${result.testRecipient} for ${formatWindowLabel(
+          stop.window
+        )}.`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCallingStopId(null);
+    }
+  };
+
   if (loading || !plan) {
     return <div className="dispatch-board__loading">Loading CT dispatch board…</div>;
   }
@@ -309,7 +384,8 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
           <h2>CT Dispatch · 5 trucks</h2>
           <p>
             Depot: {plan.originAddress || DEFAULT_DISPATCH_ORIGIN}. Default windows: 1st 8–12,
-            2nd 10–2, 3rd 12–4 (editable). Morning texts still go to the test number.
+            2nd 10–2, 3rd 12–4 (editable). Morning texts and temporary voice confirmations
+            still go to the test number.
           </p>
         </div>
         <div className="dispatch-board__actions">
@@ -492,6 +568,10 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
                         customWindow: true,
                       }))
                     }
+                    onCallConfirmation={() =>
+                      void handleVoiceConfirmation(truck, stop)
+                    }
+                    calling={callingStopId === stop.id}
                   />
                 </div>
               ))}

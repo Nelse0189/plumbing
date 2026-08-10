@@ -116,6 +116,19 @@ The main app **Dispatch** tab is a 5-truck Connecticut day board:
    `SMS_TEST_RECIPIENT` until customer sending is enabled.
 5. **Reopen** unlocks the truck and cancels pending morning texts.
 
+### Temporary voice window confirmations
+
+Each assigned stop has **Call test confirmation**. It places an immediate
+voice call only to `SMS_TEST_RECIPIENT`—never the work order's customer number
+in the current test mode—and says the stop's configured arrival window. The
+callee presses **1** (or says “yes”) to confirm, or **2** (or says “no”) to
+decline. The call delivery state, answer, and captured keypad/speech detail
+are stored in `voiceConfirmations` and shown directly on the dispatch stop.
+
+This is a manual dispatcher action; it does not place automatic customer calls.
+Before moving out of test mode, obtain the appropriate customer-call consent,
+use the work order's verified phone number only, and review the voice script.
+
 Frontend optional vars (`.env.local`):
 
 ```env
