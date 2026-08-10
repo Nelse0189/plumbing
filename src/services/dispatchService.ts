@@ -451,6 +451,67 @@ export async function cancelMorningTextsForTruck(
   };
 }
 
+/**
+ * Removes a job from the dispatch plan and deletes its work order so it is not
+ * re-imported on the next board refresh. Pending morning texts for that stop are canceled.
+ */
+export async function deleteDispatchJob(
+  plan: DispatchPlan,
+  stopId: string
+): Promise<DispatchPlan> {
+  let removed: DispatchStop | null = null;
+  let truckId: string | null = null;
+
+  if (plan.unassigned.some((stop) => stop.id === stopId)) {
+    removed = plan.unassigned.find((stop) => stop.id === stopId) || null;
+  } else if (plan.notReady.some((stop) => stop.id === stopId)) {
+    removed = plan.notReady.find((stop) => stop.id === stopId) || null;
+  } else {
+    for (const truck of plan.trucks) {
+      const stop = truck.stops.find((item) => item.id === stopId);
+      if (stop) {
+        removed = stop;
+        truckId = truck.id;
+        break;
+      }
+    }
+  }
+
+  if (!removed) {
+    throw new Error('That job is no longer on the board.');
+  }
+
+  if (truckId) {
+    const morningRef = doc(db, MORNING_COLLECTION, morningDocId(plan.date, truckId, stopId));
+    const morningSnap = await getDoc(morningRef);
+    if (morningSnap.exists() && morningSnap.data().status === 'pending') {
+      await deleteDoc(morningRef);
+    }
+  }
+
+  const workOrderRef = doc(db, WORK_ORDERS_COLLECTION, removed.workOrderId || stopId);
+  const workOrderSnap = await getDoc(workOrderRef);
+  if (workOrderSnap.exists()) {
+    await deleteDoc(workOrderRef);
+  }
+
+  const next: DispatchPlan = {
+    ...plan,
+    unassigned: plan.unassigned.filter((stop) => stop.id !== stopId),
+    notReady: plan.notReady.filter((stop) => stop.id !== stopId),
+    trucks: plan.trucks.map((truck) => {
+      if (!truck.stops.some((stop) => stop.id === stopId)) return truck;
+      return {
+        ...truck,
+        stops: applyDefaultWindows(truck.stops.filter((stop) => stop.id !== stopId)),
+      };
+    }),
+  };
+
+  await saveDispatchPlan(next);
+  return next;
+}
+
 /** Creates a ready mock job for the selected date so dispatchers can test truck assignment. */
 export async function createMockDispatchJob(date: string): Promise<DispatchStop> {
   const stamp = Date.now().toString().slice(-6);

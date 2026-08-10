@@ -229,9 +229,35 @@
   font-size: 0.8rem;
 }
 
+.dispatch-node__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
 .dispatch-node__miles {
   color: var(--accent);
   font-size: 0.7rem;
+}
+
+.dispatch-node__delete {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.65rem;
+  line-height: 1.2;
+  border-color: var(--error);
+  color: #ffb4b4;
+  background: transparent;
+  cursor: pointer;
+}
+
+.dispatch-node__delete:hover:not(:disabled) {
+  background: rgba(202, 71, 84, 0.15);
+}
+
+.dispatch-node__delete:disabled {
+  opacity: 0.6;
+  cursor: wait;
 }
 
 .dispatch-node__customer {

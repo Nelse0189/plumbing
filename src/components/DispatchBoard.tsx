@@ -5,6 +5,7 @@ import {
   autoOrderTruckStops,
   cancelMorningTextsForTruck,
   createMockDispatchJob,
+  deleteDispatchJob,
   getDispatchPlan,
   queueMorningTextsForTruck,
   saveDispatchPlan,
@@ -76,6 +77,8 @@ function StopNode({
   onPriorityChange,
   onWindowChange,
   onCallConfirmation,
+  onDelete,
+  deleting,
   calling,
   dragPayload,
 }: {
@@ -84,6 +87,8 @@ function StopNode({
   onPriorityChange?: (priority: number) => void;
   onWindowChange?: (start: string, end: string) => void;
   onCallConfirmation?: () => void;
+  onDelete?: () => void;
+  deleting?: boolean;
   calling?: boolean;
   dragPayload: DragPayload;
 }) {
@@ -98,9 +103,28 @@ function StopNode({
     >
       <header className="dispatch-node__header">
         <strong>{stop.workOrderNumber || 'No WO#'}</strong>
-        {stop.distanceMiles != null && (
-          <span className="dispatch-node__miles">{stop.distanceMiles} mi</span>
-        )}
+        <span className="dispatch-node__header-actions">
+          {stop.distanceMiles != null && (
+            <span className="dispatch-node__miles">{stop.distanceMiles} mi</span>
+          )}
+          {onDelete && (
+            <button
+              type="button"
+              className="dispatch-node__delete"
+              disabled={deleting}
+              title="Delete job"
+              aria-label={`Delete job ${stop.workOrderNumber || stop.customerName || stop.id}`}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onDelete();
+              }}
+            >
+              {deleting ? '…' : 'Delete'}
+            </button>
+          )}
+        </span>
       </header>
       <p className="dispatch-node__customer">{stop.customerName}</p>
       <p className="dispatch-node__address">{stop.address || 'No address'}</p>
@@ -177,6 +201,7 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [callingStopId, setCallingStopId] = useState<string | null>(null);
+  const [deletingStopId, setDeletingStopId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -376,6 +401,27 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
     }
   };
 
+  const handleDeleteJob = async (stop: DispatchStop) => {
+    if (!plan) return;
+    const label = stop.workOrderNumber || stop.customerName || 'this job';
+    const confirmed = window.confirm(
+      `Delete ${label}? This removes it from the board and deletes the work order.`
+    );
+    if (!confirmed) return;
+
+    setDeletingStopId(stop.id);
+    setError(null);
+    try {
+      const next = await deleteDispatchJob(plan, stop.id);
+      setPlan(next);
+      setStatus(`Deleted ${label}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeletingStopId(null);
+    }
+  };
+
   const handleVoiceConfirmation = async (truck: DispatchTruck, stop: DispatchStop) => {
     if (!plan) return;
     setCallingStopId(stop.id);
@@ -520,6 +566,8 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
               stop={stop}
               locked={false}
               dragPayload={{ from: 'notReady', stopId: stop.id }}
+              onDelete={() => void handleDeleteJob(stop)}
+              deleting={deletingStopId === stop.id}
             />
           ))}
         </section>
@@ -549,6 +597,8 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
                 await persist(next);
               }}
               dragPayload={{ from: 'unassigned', stopId: stop.id }}
+              onDelete={() => void handleDeleteJob(stop)}
+              deleting={deletingStopId === stop.id}
             />
           ))}
         </section>
@@ -648,6 +698,8 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
                       void handleVoiceConfirmation(truck, stop)
                     }
                     calling={callingStopId === stop.id}
+                    onDelete={() => void handleDeleteJob(stop)}
+                    deleting={deletingStopId === stop.id}
                   />
                 </div>
               ))}
