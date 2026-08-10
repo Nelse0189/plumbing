@@ -1,0 +1,44 @@
+rules_version = '2';
+
+// Temporary open rules for the internal scheduling/dispatch console.
+// The web app currently uses the Firestore client without Firebase Auth.
+// Cloud Functions use the Admin SDK and are not limited by these rules.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /schedules/{document} {
+      allow read, write: if true;
+    }
+
+    match /workOrders/{document} {
+      allow read, write: if true;
+    }
+
+    match /dispatchPlans/{document} {
+      allow read, write: if true;
+    }
+
+    match /morningConfirmations/{document} {
+      allow read, write: if true;
+    }
+
+    match /voiceConfirmations/{document} {
+      allow read, write: if true;
+    }
+
+    match /schedulingRequests/{document} {
+      allow read, write: if true;
+    }
+
+    match /reminders/{document} {
+      allow read, write: if true;
+    }
+
+    match /smsOptOuts/{document} {
+      allow read, write: if true;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

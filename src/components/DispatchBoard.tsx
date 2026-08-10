@@ -156,6 +156,19 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : String(err));
+          setPlan({
+            date: selectedDate,
+            originAddress: DEFAULT_DISPATCH_ORIGIN,
+            trucks: [
+              { id: 'truck1', name: 'Truck 1', set: false, stops: [] },
+              { id: 'truck2', name: 'Truck 2', set: false, stops: [] },
+              { id: 'truck3', name: 'Truck 3', set: false, stops: [] },
+              { id: 'truck4', name: 'Truck 4', set: false, stops: [] },
+              { id: 'truck5', name: 'Truck 5', set: false, stops: [] },
+            ],
+            unassigned: [],
+            notReady: [],
+          });
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -374,7 +387,12 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
   };
 
   if (loading || !plan) {
-    return <div className="dispatch-board__loading">Loading CT dispatch board…</div>;
+    return (
+      <div className="dispatch-board">
+        <div className="dispatch-board__loading">Loading CT dispatch board…</div>
+        {error && <div className="dispatch-board__error">{error}</div>}
+      </div>
+    );
   }
 
   return (
