@@ -1258,9 +1258,7 @@ export const handleVoiceWindowCall = onRequest(
       ? (confirmationDoc.data() as VoiceConfirmationRecord)
       : null;
     const response = new twilio.twiml.VoiceResponse();
-    const promptUrl = `https://us-central1-nj-plumbing.cloudfunctions.net/handleVoiceWindowPrompt?confirmationId=${encodeURIComponent(
-      confirmationId
-    )}`;
+    const promptUrl = voiceWindowPromptUrl(confirmationId);
 
     if (!confirmation) {
       response.say("This confirmation is no longer available. Goodbye.");
@@ -1285,6 +1283,41 @@ export const handleVoiceWindowCall = onRequest(
   }
 );
 
+function voiceWindowPromptUrl(confirmationId: string): string {
+  return `https://us-central1-nj-plumbing.cloudfunctions.net/handleVoiceWindowPrompt?confirmationId=${encodeURIComponent(
+    confirmationId
+  )}`;
+}
+
+function voiceWindowAnswerUrl(confirmationId: string): string {
+  return `https://us-central1-nj-plumbing.cloudfunctions.net/handleVoiceWindowResponse?confirmationId=${encodeURIComponent(
+    confirmationId
+  )}`;
+}
+
+function appendVoiceWindowPrompt(
+  response: twilio.twiml.VoiceResponse,
+  confirmation: VoiceConfirmationRecord,
+  confirmationId: string
+) {
+  const gather = response.gather({
+    input: ["dtmf", "speech"],
+    numDigits: 1,
+    timeout: 10,
+    speechTimeout: "auto",
+    action: voiceWindowAnswerUrl(confirmationId),
+    method: "POST",
+  });
+  gather.say(
+    `Thank you. This is a test call from ${strCompanyName.value()}. ` +
+      `For ${confirmation.customerName || "the customer"}, the arrival window is ` +
+      `${confirmation.appointmentWindow}. ` +
+      "Press 1 or say yes if this works. Press 2 or say no if it does not work. " +
+      "Press 9 or say repeat to hear this message again."
+  );
+  response.redirect(`${voiceWindowAnswerUrl(confirmationId)}&noResponse=1`);
+}
+
 export const handleVoiceWindowPrompt = onRequest(
   {
     invoker: "public",
@@ -1299,29 +1332,12 @@ export const handleVoiceWindowPrompt = onRequest(
       ? (confirmationDoc.data() as VoiceConfirmationRecord)
       : null;
     const response = new twilio.twiml.VoiceResponse();
-    const answerUrl = `https://us-central1-nj-plumbing.cloudfunctions.net/handleVoiceWindowResponse?confirmationId=${encodeURIComponent(
-      confirmationId
-    )}`;
 
     if (!confirmation) {
       response.say("This confirmation is no longer available. Goodbye.");
       response.hangup();
     } else {
-      const gather = response.gather({
-        input: ["dtmf", "speech"],
-        numDigits: 1,
-        timeout: 10,
-        speechTimeout: "auto",
-        action: answerUrl,
-        method: "POST",
-      });
-      gather.say(
-        `Thank you. This is a test call from ${strCompanyName.value()}. ` +
-          `For ${confirmation.customerName || "the customer"}, the arrival window is ` +
-          `${confirmation.appointmentWindow}. ` +
-          "Press 1 or say yes if this works. Press 2 or say no if it does not work."
-      );
-      response.redirect(`${answerUrl}&noResponse=1`);
+      appendVoiceWindowPrompt(response, confirmation, confirmationId);
     }
     res.type("text/xml").status(200).send(response.toString());
   }
@@ -1351,6 +1367,16 @@ export const handleVoiceWindowResponse = onRequest(
     const digits = asTrimmedString(req.body?.Digits);
     const speech = asTrimmedString(req.body?.SpeechResult).toLowerCase();
     const noResponse = asTrimmedString(req.query.noResponse) === "1";
+    const wantsRepeat =
+      digits === "9" || /\b(repeat|again|replay)\b/.test(speech);
+
+    if (wantsRepeat) {
+      voice.say("Okay. I will repeat the message.");
+      appendVoiceWindowPrompt(voice, record, confirmationId);
+      res.type("text/xml").status(200).send(voice.toString());
+      return;
+    }
+
     const confirmed = digits === "1" || /\b(yes|yeah|yep|confirm)\b/.test(speech);
     const declined = digits === "2" || /\b(no|nope|decline|reschedule)\b/.test(speech);
     const response: VoiceConfirmationResponse = confirmed
@@ -1365,6 +1391,16 @@ export const handleVoiceWindowResponse = onRequest(
         : speech
           ? `Speech response: ${speech.slice(0, 200)}`
           : "Unrecognized response";
+
+    // If the answer was unclear, offer one more repeat instead of hanging up immediately.
+    if (response === "unknown" && !noResponse) {
+      voice.say(
+        "I did not understand that. Press 1 for yes, 2 for no, or 9 to hear the message again."
+      );
+      appendVoiceWindowPrompt(voice, record, confirmationId);
+      res.type("text/xml").status(200).send(voice.toString());
+      return;
+    }
 
     await ref.update({
       response,
