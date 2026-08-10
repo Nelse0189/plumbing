@@ -11,7 +11,7 @@ that can be opened in Google Sheets.
 3. The PDF is downloaded from the team's SharePoint drive and its text is
    extracted locally in the browser.
 4. That text—not the PDF image—is sent to the `extractWorkOrder` Firebase
-   callable. `gpt-5.6` returns clean plumber-facing fields (customer, phone,
+   callable. `gpt-5.6-luna` returns clean plumber-facing fields (customer, phone,
    address, installation/job type, requested date/time, notes).
 5. A staff member verifies the work-order number, customer, phone, address, job
    type, date, and time.
@@ -54,7 +54,7 @@ Fill in:
 
 ```env
 OPENAI_API_KEY=...
-OPENAI_MODEL=gpt-5-mini
+OPENAI_MODEL=gpt-5.6-luna
 MICROSOFT_TENANT_ID=your-entra-tenant-id
 
 TWILIO_ACCOUNT_SID=...

@@ -29,7 +29,7 @@ admin.initializeApp();
 const strGeminiApiKey = defineString("GEMINI_API_KEY", { default: "" });
 const strOpenAiApiKey = defineString("OPENAI_API_KEY", { default: "" });
 const strOpenAiModel = defineString("OPENAI_MODEL", {
-  default: "gpt-5.6",
+  default: "gpt-5.6-luna",
 });
 const strTwilioAuthToken = defineString("TWILIO_AUTH_TOKEN", { default: "" });
 const strGmailClientSecret = defineString("GMAIL_CLIENT_SECRET", { default: "" });
