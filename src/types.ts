@@ -74,9 +74,22 @@ export interface DispatchStop {
   lng?: number;
   morningTextStatus?: 'none' | 'queued' | 'sent' | 'failed';
   /** Temporary test-call delivery state for the arrival-window confirmation. */
-  voiceCallStatus?: 'queued' | 'ringing' | 'answered' | 'completed' | 'failed' | 'no-answer';
+  voiceCallStatus?:
+    | 'queued'
+    | 'ringing'
+    | 'answered'
+    | 'completed'
+    | 'busy'
+    | 'canceled'
+    | 'failed'
+    | 'no-answer';
   /** Customer keypad/speech answer captured during the confirmation call. */
-  voiceConfirmationResponse?: 'confirmed' | 'declined' | 'unknown';
+  voiceConfirmationResponse?:
+    | 'confirmed'
+    | 'declined'
+    | 'unknown'
+    | 'no_answer'
+    | 'hung_up';
   voiceConfirmationDetails?: string;
   voiceConfirmationAt?: string;
 }

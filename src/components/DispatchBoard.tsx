@@ -34,6 +34,42 @@ function parseDrag(data: string): DragPayload | null {
   }
 }
 
+function formatVoiceConfirmationLabel(stop: DispatchStop): string {
+  const responseLabels: Record<
+    NonNullable<DispatchStop['voiceConfirmationResponse']>,
+    string
+  > = {
+    confirmed: 'Confirmed',
+    declined: 'Declined',
+    unknown: 'No clear answer',
+    no_answer: 'No answer',
+    hung_up: 'Hung up',
+  };
+  const statusLabels: Record<NonNullable<DispatchStop['voiceCallStatus']>, string> = {
+    queued: 'Queued',
+    ringing: 'Ringing',
+    answered: 'Answered',
+    completed: 'Completed',
+    busy: 'Busy',
+    canceled: 'Canceled',
+    failed: 'Failed',
+    'no-answer': 'No answer',
+  };
+
+  const response = stop.voiceConfirmationResponse;
+  if (response && response !== 'unknown') {
+    return `Call: ${responseLabels[response]}`;
+  }
+  if (stop.voiceCallStatus) {
+    const status = statusLabels[stop.voiceCallStatus] || stop.voiceCallStatus;
+    if (response === 'unknown' && stop.voiceCallStatus === 'completed') {
+      return `Call: ${responseLabels.unknown}`;
+    }
+    return `Call: ${status}`;
+  }
+  return 'Call: unknown';
+}
+
 function StopNode({
   stop,
   locked,
@@ -119,13 +155,9 @@ function StopNode({
             >
               {calling ? 'Calling test…' : 'Call test confirmation'}
             </button>
-            {stop.voiceCallStatus && (
+            {(stop.voiceCallStatus || stop.voiceConfirmationResponse) && (
               <small>
-                Call: {stop.voiceCallStatus}
-                {stop.voiceConfirmationResponse &&
-                stop.voiceConfirmationResponse !== 'unknown'
-                  ? ` · ${stop.voiceConfirmationResponse}`
-                  : ''}
+                {formatVoiceConfirmationLabel(stop)}
               </small>
             )}
             {stop.voiceConfirmationDetails && (
@@ -367,7 +399,6 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
                     : {
                         ...candidateStop,
                         voiceCallStatus: 'queued',
-                        voiceConfirmationResponse: 'unknown',
                         voiceConfirmationDetails: 'Test call queued',
                       }
                 ),

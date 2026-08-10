@@ -1056,9 +1056,16 @@ type VoiceCallStatus =
   | "ringing"
   | "answered"
   | "completed"
+  | "busy"
+  | "canceled"
   | "failed"
   | "no-answer";
-type VoiceConfirmationResponse = "confirmed" | "declined" | "unknown";
+type VoiceConfirmationResponse =
+  | "confirmed"
+  | "declined"
+  | "unknown"
+  | "no_answer"
+  | "hung_up";
 
 interface VoiceConfirmationRecord {
   dispatchDate: string;
@@ -1193,7 +1200,6 @@ export const initiateVoiceWindowConfirmation = onCall(
       testing: true,
       routedTo: testRecipient,
       callStatus: "queued",
-      response: "unknown",
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
@@ -1218,7 +1224,6 @@ export const initiateVoiceWindowConfirmation = onCall(
       });
       await updateDispatchStopVoiceFields(dispatchDate, truckId, stopId, {
         voiceCallStatus: "queued",
-        voiceConfirmationResponse: "unknown",
         voiceConfirmationDetails: "Test call queued",
       });
       return {
@@ -1435,6 +1440,64 @@ export const handleVoiceWindowResponse = onRequest(
   }
 );
 
+function voiceStatusDetails(
+  callStatus: VoiceCallStatus,
+  record: VoiceConfirmationRecord
+): { details: string; response?: VoiceConfirmationResponse } {
+  const answered =
+    record.response === "confirmed" || record.response === "declined";
+
+  if (callStatus === "no-answer") {
+    return {
+      details: "Customer did not answer",
+      response: answered ? undefined : "no_answer",
+    };
+  }
+  if (callStatus === "busy") {
+    return {
+      details: "Line was busy",
+      response: answered ? undefined : "no_answer",
+    };
+  }
+  if (callStatus === "failed") {
+    return {
+      details: "Call failed to connect",
+      response: answered ? undefined : "no_answer",
+    };
+  }
+  if (callStatus === "canceled") {
+    return {
+      details: "Call was canceled",
+      response: answered ? undefined : "no_answer",
+    };
+  }
+  if (callStatus === "completed") {
+    if (answered) {
+      return {
+        details: record.responseDetails || `Customer answered: ${record.response}`,
+      };
+    }
+    // Gather timeout / unclear-answer path already finalized response as unknown.
+    if (record.response === "unknown") {
+      return {
+        details: record.responseDetails || "No clear yes/no answer",
+      };
+    }
+    // Phone was answered, then the call ended before a yes/no was recorded.
+    return {
+      details: "Customer hung up without confirming",
+      response: "hung_up",
+    };
+  }
+  if (callStatus === "ringing") {
+    return { details: "Ringing…" };
+  }
+  if (callStatus === "answered") {
+    return { details: "Customer answered; playing confirmation prompt" };
+  }
+  return { details: `Call status: ${callStatus}` };
+}
+
 export const handleVoiceWindowStatus = onRequest(
   {
     invoker: "public",
@@ -1448,6 +1511,8 @@ export const handleVoiceWindowStatus = onRequest(
       "ringing",
       "answered",
       "completed",
+      "busy",
+      "canceled",
       "failed",
       "no-answer",
     ];
@@ -1456,23 +1521,34 @@ export const handleVoiceWindowStatus = onRequest(
       const doc = await ref.get();
       if (doc.exists) {
         const record = doc.data() as VoiceConfirmationRecord;
-        await ref.update({
+        const outcome = voiceStatusDetails(callStatus, record);
+        const confirmationUpdate: Record<string, unknown> = {
           callStatus,
           twilioCallSid: asTrimmedString(req.body?.CallSid),
           callDuration: asTrimmedString(req.body?.CallDuration),
+          responseDetails: outcome.details,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
+        };
+        if (outcome.response) {
+          confirmationUpdate.response = outcome.response;
+          confirmationUpdate.respondedAt =
+            admin.firestore.FieldValue.serverTimestamp();
+        }
+        await ref.update(confirmationUpdate);
+
+        const stopUpdate: Record<string, unknown> = {
+          voiceCallStatus: callStatus,
+          voiceConfirmationDetails: outcome.details,
+        };
+        if (outcome.response) {
+          stopUpdate.voiceConfirmationResponse = outcome.response;
+          stopUpdate.voiceConfirmationAt = new Date().toISOString();
+        }
         await updateDispatchStopVoiceFields(
           record.dispatchDate,
           record.truckId,
           record.stopId,
-          {
-            voiceCallStatus: callStatus,
-            voiceConfirmationDetails:
-              callStatus === "completed"
-                ? record.responseDetails || "Call completed; waiting for response"
-                : `Call status: ${callStatus}`,
-          }
+          stopUpdate
         );
       }
     }
