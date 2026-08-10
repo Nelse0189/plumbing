@@ -450,3 +450,43 @@ export async function cancelMorningTextsForTruck(
     })),
   };
 }
+
+/** Creates a ready mock job for the selected date so dispatchers can test truck assignment. */
+export async function createMockDispatchJob(date: string): Promise<DispatchStop> {
+  const stamp = Date.now().toString().slice(-6);
+  const workOrderNumber = `TEST-${stamp}`;
+  const workOrderId = `${date}-${workOrderNumber}`;
+  const stop = toDispatchStop({
+    id: workOrderId,
+    workOrderNumber,
+    customerName: 'Test Customer',
+    phone: '+18609643025',
+    address: '100 Main Street, Hartford, CT',
+    jobType: 'Water heater installation',
+    notes: 'Mock dispatch job for testing truck assignment and voice confirmation.',
+    sourceFileName: 'mock-test-job',
+  });
+
+  await setDoc(
+    doc(db, WORK_ORDERS_COLLECTION, workOrderId),
+    {
+      workOrderNumber,
+      customerName: stop.customerName,
+      phone: stop.phone,
+      address: stop.address,
+      jobType: stop.jobType,
+      appointmentDate: date,
+      appointmentTime: '',
+      notes: stop.notes,
+      sourceFileName: stop.sourceFileName,
+      smsConsent: true,
+      status: 'unscheduled',
+      mock: true,
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    },
+    { merge: true }
+  );
+
+  return stop;
+}

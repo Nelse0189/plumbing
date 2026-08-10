@@ -4,6 +4,7 @@ import {
   autoOrderAllUnsetTrucks,
   autoOrderTruckStops,
   cancelMorningTextsForTruck,
+  createMockDispatchJob,
   getDispatchPlan,
   queueMorningTextsForTruck,
   saveDispatchPlan,
@@ -407,6 +408,32 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
           </p>
         </div>
         <div className="dispatch-board__actions">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={async () => {
+              setSaving(true);
+              setError(null);
+              try {
+                const mockStop = await createMockDispatchJob(plan.date);
+                const next: DispatchPlan = {
+                  ...plan,
+                  unassigned: [...plan.unassigned, mockStop],
+                };
+                await saveDispatchPlan(next);
+                setPlan(next);
+                setStatus(
+                  `Mock job ${mockStop.workOrderNumber} added to Ready / Unassigned. Drag it onto a truck.`
+                );
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            Create test job
+          </button>
           <button
             type="button"
             disabled={saving}
