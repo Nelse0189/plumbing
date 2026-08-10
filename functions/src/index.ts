@@ -501,10 +501,24 @@ export const importChannelPdfWorkOrder = onCall(
     const existing = await recordRef.get();
 
     if (existing.exists && !force) {
+      const existingData = existing.data() || {};
+      const existingNotes = asTrimmedString(existingData.notes);
+      const notesAlreadyIncluded =
+        !channelNote ||
+        existingNotes.toLowerCase().includes(channelNote.toLowerCase());
+      if (!notesAlreadyIncluded) {
+        await recordRef.update({
+          notes: existingNotes
+            ? `${existingNotes}\n\nChannel notes:\n${channelNote}`
+            : `Channel notes:\n${channelNote}`,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+      const cachedRecord = notesAlreadyIncluded ? existing : await recordRef.get();
       return {
         cached: true,
         workOrderId: recordId,
-        workOrder: serializeWorkOrderRecord(recordId, existing.data() || {}),
+        workOrder: serializeWorkOrderRecord(recordId, cachedRecord.data() || {}),
       };
     }
 

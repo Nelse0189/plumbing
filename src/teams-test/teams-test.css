@@ -185,6 +185,56 @@
   color: var(--text-secondary);
 }
 
+.teams-test__message-title {
+  margin: 0.15rem 0 0.45rem;
+  color: var(--accent);
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.teams-test__thread {
+  margin-top: 0.65rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-primary);
+}
+
+.teams-test__thread summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 0.8rem;
+}
+
+.teams-test__thread ul {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.teams-test__thread li {
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--border);
+}
+
+.teams-test__thread-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.teams-test__thread li p {
+  margin: 0.25rem 0 0;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
 .teams-test__message p {
   font-size: 0.9rem;
   line-height: 1.5;

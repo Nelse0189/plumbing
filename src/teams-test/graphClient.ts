@@ -44,6 +44,7 @@ export interface GraphChat {
 export interface GraphMessage {
   id: string;
   createdDateTime: string;
+  subject?: string;
   from?: {
     user?: {
       displayName?: string;
@@ -53,6 +54,7 @@ export interface GraphMessage {
     content?: string;
   };
   attachments?: GraphAttachment[];
+  replies?: GraphMessage[];
 }
 
 export interface GraphAttachment {
@@ -84,10 +86,28 @@ export function getTeamChannels(teamId: string) {
   );
 }
 
-export function getChannelMessages(teamId: string, channelId: string) {
-  return graphFetch<ListResponse<GraphMessage>>(
+export async function getChannelMessages(teamId: string, channelId: string) {
+  const response = await graphFetch<ListResponse<GraphMessage>>(
     `/teams/${teamId}/channels/${channelId}/messages?$top=25`
   );
+
+  // Channel posts and their replies are separate Graph resources. Fetch the
+  // thread for each post so the UI and work-order notes match what Teams shows.
+  const messages = await Promise.all(
+    response.value.map(async (message) => {
+      try {
+        const replies = await graphFetch<ListResponse<GraphMessage>>(
+          `/teams/${teamId}/channels/${channelId}/messages/${message.id}/replies?$top=50`
+        );
+        return { ...message, replies: replies.value };
+      } catch {
+        // A missing/denied reply thread should not hide the channel post.
+        return { ...message, replies: [] };
+      }
+    })
+  );
+
+  return { value: messages };
 }
 
 function getDriveRelativePath(contentUrl: string) {

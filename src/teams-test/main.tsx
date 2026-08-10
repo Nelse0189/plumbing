@@ -71,13 +71,29 @@ function messageHasPdf(message: GraphMessage) {
   );
 }
 
-function formatChannelNoteLine(message: GraphMessage, body: string) {
+function formatChannelNoteLine(
+  message: GraphMessage,
+  body: string,
+  isReply = false
+) {
   const from = message.from?.user?.displayName ?? 'Unknown';
   const stamp = new Date(message.createdDateTime).toLocaleString();
-  return `[${stamp} · ${from}] ${body}`;
+  return `${isReply ? 'Reply — ' : ''}[${stamp} · ${from}] ${body}`;
 }
 
-/** Message body on the PDF post, plus other channel notes that mention this job. */
+function messageThreadText(message: GraphMessage) {
+  return [
+    message.subject?.trim(),
+    stripHtml(message.body?.content ?? '').trim(),
+    ...(message.replies || []).map((reply) =>
+      stripHtml(reply.body?.content ?? '').trim()
+    ),
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/** Message post/replies on the PDF thread, plus related posts and their replies. */
 function collectChannelNotesForWorkOrder(
   channelMessages: GraphMessage[],
   sourceMessageId: string,
@@ -93,9 +109,10 @@ function collectChannelNotesForWorkOrder(
 
   for (const message of channelMessages) {
     const body = stripHtml(message.body?.content ?? '').trim();
-    if (!body || seen.has(message.id)) continue;
+    const threadText = messageThreadText(message);
+    if (!threadText || seen.has(message.id)) continue;
 
-    const haystack = body.toLowerCase();
+    const haystack = threadText.toLowerCase();
     const isSource = message.id === sourceMessageId;
     const matchesWorkOrder =
       workOrderNumber.length >= 3 && haystack.includes(workOrderNumber);
@@ -106,7 +123,18 @@ function collectChannelNotesForWorkOrder(
 
     if (isSource || matchesWorkOrder || matchesCustomer || matchesAddress) {
       seen.add(message.id);
-      lines.push(formatChannelNoteLine(message, body));
+      if (message.subject?.trim()) {
+        lines.push(`Post title: ${message.subject.trim()}`);
+      }
+      if (body) {
+        lines.push(formatChannelNoteLine(message, body));
+      }
+      for (const reply of message.replies || []) {
+        const replyBody = stripHtml(reply.body?.content ?? '').trim();
+        if (replyBody) {
+          lines.push(formatChannelNoteLine(reply, replyBody, true));
+        }
+      }
     }
   }
 
@@ -848,7 +876,35 @@ function TeamsGraphTestApp() {
                       <strong>{message.from?.user?.displayName ?? 'Unknown'}</strong>
                       <span>{new Date(message.createdDateTime).toLocaleString()}</span>
                     </div>
+                    {message.subject?.trim() && (
+                      <h3 className="teams-test__message-title">
+                        {message.subject.trim()}
+                      </h3>
+                    )}
                     <p>{stripHtml(message.body?.content ?? '')}</p>
+                    {(message.replies?.length || 0) > 0 && (
+                      <details className="teams-test__thread">
+                        <summary>
+                          View thread ({message.replies?.length} repl
+                          {message.replies?.length === 1 ? 'y' : 'ies'})
+                        </summary>
+                        <ul>
+                          {message.replies?.map((reply) => (
+                            <li key={reply.id}>
+                              <div className="teams-test__thread-meta">
+                                <strong>
+                                  {reply.from?.user?.displayName ?? 'Unknown'}
+                                </strong>
+                                <span>
+                                  {new Date(reply.createdDateTime).toLocaleString()}
+                                </span>
+                              </div>
+                              <p>{stripHtml(reply.body?.content ?? '')}</p>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
                     {message.attachments
                       ?.filter(
                         (attachment) =>
