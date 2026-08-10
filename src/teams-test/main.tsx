@@ -168,7 +168,12 @@ function TeamsGraphTestApp() {
   const [schedulingWorkOrderId, setSchedulingWorkOrderId] = useState<string | null>(
     null
   );
+  const [notesWorkOrderId, setNotesWorkOrderId] = useState<string | null>(null);
   const channelImportGenerationRef = useRef(0);
+  const notesWorkOrder = useMemo(
+    () => storedWorkOrders.find((item) => item.id === notesWorkOrderId) || null,
+    [notesWorkOrderId, storedWorkOrders]
+  );
 
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
@@ -1020,6 +1025,15 @@ function TeamsGraphTestApp() {
                             <span>
                               Customer phone on file: {workOrder.phone}
                             </span>
+                            <button
+                              type="button"
+                              className="teams-test__notes-button"
+                              onClick={() => setNotesWorkOrderId(workOrder.id)}
+                            >
+                              {workOrder.notes?.trim()
+                                ? 'View notes'
+                                : 'No notes'}
+                            </button>
                             {status === 'unscheduled' && (
                               <button
                                 type="button"
@@ -1056,6 +1070,62 @@ function TeamsGraphTestApp() {
               )}
             </div>
           </section>
+
+          {notesWorkOrder && (
+            <div
+              className="teams-test__notes-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Notes for ${notesWorkOrder.workOrderNumber || 'job'}`}
+            >
+              <div
+                className="teams-test__notes-modal-backdrop"
+                onClick={() => setNotesWorkOrderId(null)}
+              />
+              <div className="teams-test__notes-modal-panel">
+                <header className="teams-test__notes-modal-header">
+                  <div>
+                    <strong>WO {notesWorkOrder.workOrderNumber || '—'}</strong>
+                    <p>{notesWorkOrder.customerName || 'Unknown customer'}</p>
+                  </div>
+                  <button type="button" onClick={() => setNotesWorkOrderId(null)}>
+                    Close
+                  </button>
+                </header>
+                <dl className="teams-test__notes-modal-facts">
+                  <div>
+                    <dt>Phone</dt>
+                    <dd>{notesWorkOrder.phone || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>Address</dt>
+                    <dd>{notesWorkOrder.address || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>Job type</dt>
+                    <dd>{notesWorkOrder.jobType || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>Requested</dt>
+                    <dd>
+                      {notesWorkOrder.appointmentDate || '—'}
+                      {notesWorkOrder.appointmentTime
+                        ? ` at ${notesWorkOrder.appointmentTime}`
+                        : ''}
+                    </dd>
+                  </div>
+                </dl>
+                <section>
+                  <h3>Notes</h3>
+                  {notesWorkOrder.notes?.trim() ? (
+                    <pre>{notesWorkOrder.notes}</pre>
+                  ) : (
+                    <p className="teams-test__hint">No notes on this work order.</p>
+                  )}
+                </section>
+              </div>
+            </div>
+          )}
 
           {Object.keys(processedWorkOrders).length > 0 && (
             <section className="teams-test__processed">

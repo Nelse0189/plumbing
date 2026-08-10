@@ -345,8 +345,99 @@
   margin-top: 0.4rem;
 }
 
+.teams-test__notes-button {
+  align-self: flex-start;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .teams-test__job-card .teams-test__job-status {
   color: var(--success);
+}
+
+.teams-test__notes-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.teams-test__notes-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.teams-test__notes-modal-panel {
+  position: relative;
+  z-index: 1;
+  width: min(36rem, 100%);
+  max-height: min(80vh, 40rem);
+  overflow: auto;
+  padding: 1rem 1.1rem 1.15rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+
+.teams-test__notes-modal-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+  margin-bottom: 0.85rem;
+}
+
+.teams-test__notes-modal-header strong {
+  color: var(--accent);
+}
+
+.teams-test__notes-modal-header p {
+  margin-top: 0.2rem;
+}
+
+.teams-test__notes-modal-facts {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0 0 0.9rem;
+}
+
+.teams-test__notes-modal-facts dt {
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.teams-test__notes-modal-facts dd {
+  margin: 0.15rem 0 0;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  word-break: break-word;
+}
+
+.teams-test__notes-modal-panel h3 {
+  margin: 0 0 0.4rem;
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+
+.teams-test__notes-modal-panel pre {
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 18rem;
+  overflow: auto;
 }
 
 .teams-test__work-order {
