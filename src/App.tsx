@@ -109,6 +109,22 @@ function App() {
             >
               Map View
             </button>
+            <a
+              href="/teams-test"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                padding: '0.5rem 1rem',
+                backgroundColor: 'var(--bg-secondary)',
+                color: 'var(--text-primary)',
+                border: '1px solid var(--border)',
+                borderRadius: '4px',
+                textDecoration: 'none',
+                font: 'inherit',
+              }}
+            >
+              Teams Channels
+            </a>
           </div>
         </div>
       </header>

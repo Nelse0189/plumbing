@@ -337,6 +337,9 @@ function TeamsGraphTestApp() {
           </p>
         </div>
         <div className="teams-test__header-actions">
+          <a className="teams-test__nav-link" href="/">
+            Dispatch
+          </a>
           {signedIn && <span className="teams-test__profile">{profileName}</span>}
           {signedIn ? (
             <button type="button" onClick={() => signOut()}>

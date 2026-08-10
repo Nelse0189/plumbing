@@ -30,6 +30,22 @@
   gap: 1rem;
 }
 
+.teams-test__nav-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  text-decoration: none;
+  background: var(--bg-secondary);
+}
+
+.teams-test__nav-link:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .teams-test__profile {
   color: var(--success);
   font-size: 0.9rem;
