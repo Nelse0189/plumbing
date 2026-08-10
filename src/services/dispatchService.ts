@@ -3,11 +3,13 @@ import {
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   query,
   setDoc,
   Timestamp,
   where,
   deleteDoc,
+  type Unsubscribe,
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import type {
@@ -169,37 +171,104 @@ export function createEmptyDispatchPlan(date: string): DispatchPlan {
   };
 }
 
+function planFromSnapshotData(
+  date: string,
+  data: Record<string, unknown> | undefined
+): DispatchPlan {
+  if (!data) {
+    return createEmptyDispatchPlan(date);
+  }
+
+  const plan: DispatchPlan = {
+    date,
+    originAddress:
+      (typeof data.originAddress === 'string' && data.originAddress) ||
+      DEFAULT_DISPATCH_ORIGIN,
+    trucks: Array.isArray(data.trucks)
+      ? (data.trucks as DispatchTruck[])
+      : createEmptyDispatchTrucks(),
+    unassigned: Array.isArray(data.unassigned)
+      ? (data.unassigned as DispatchStop[])
+      : [],
+    notReady: Array.isArray(data.notReady) ? (data.notReady as DispatchStop[]) : [],
+    updatedAt:
+      data.updatedAt &&
+      typeof data.updatedAt === 'object' &&
+      data.updatedAt !== null &&
+      'toDate' in data.updatedAt &&
+      typeof (data.updatedAt as { toDate?: () => Date }).toDate === 'function'
+        ? (data.updatedAt as { toDate: () => Date }).toDate().toISOString()
+        : undefined,
+  };
+
+  while (plan.trucks.length < 5) {
+    const index = plan.trucks.length;
+    plan.trucks.push({
+      id: `truck${index + 1}`,
+      name: `Truck ${index + 1}`,
+      set: false,
+      stops: [],
+    });
+  }
+
+  return plan;
+}
+
 export async function getDispatchPlan(date: string): Promise<DispatchPlan> {
   const workOrders = await listWorkOrdersForDate(date);
   const planRef = doc(db, DISPATCH_COLLECTION, date);
   const snap = await getDoc(planRef);
-
-  let plan: DispatchPlan;
-  if (snap.exists()) {
-    const data = snap.data();
-    plan = {
-      date,
-      originAddress: data.originAddress || DEFAULT_DISPATCH_ORIGIN,
-      trucks: Array.isArray(data.trucks) ? data.trucks : createEmptyDispatchTrucks(),
-      unassigned: Array.isArray(data.unassigned) ? data.unassigned : [],
-      notReady: Array.isArray(data.notReady) ? data.notReady : [],
-      updatedAt: data.updatedAt?.toDate?.()?.toISOString?.(),
-    };
-    // Ensure 5 trucks
-    while (plan.trucks.length < 5) {
-      const index = plan.trucks.length;
-      plan.trucks.push({
-        id: `truck${index + 1}`,
-        name: `Truck ${index + 1}`,
-        set: false,
-        stops: [],
-      });
-    }
-  } else {
-    plan = createEmptyDispatchPlan(date);
-  }
-
+  const plan = planFromSnapshotData(
+    date,
+    snap.exists() ? (snap.data() as Record<string, unknown>) : undefined
+  );
   return mergeWorkOrdersIntoPlan(plan, workOrders);
+}
+
+/**
+ * Live-updates the dispatch plan (including voice call status written by Twilio
+ * webhooks) without requiring a manual page reload.
+ */
+export function subscribeDispatchPlan(
+  date: string,
+  onChange: (plan: DispatchPlan) => void,
+  onError?: (error: Error) => void
+): Unsubscribe {
+  const planRef = doc(db, DISPATCH_COLLECTION, date);
+  let cancelled = false;
+  let requestId = 0;
+  let workOrdersCache: StoredWorkOrder[] | null = null;
+
+  const unsubscribe = onSnapshot(
+    planRef,
+    (snap) => {
+      const currentRequest = ++requestId;
+      void (async () => {
+        try {
+          if (!workOrdersCache) {
+            workOrdersCache = await listWorkOrdersForDate(date);
+          }
+          if (cancelled || currentRequest !== requestId) return;
+          const plan = planFromSnapshotData(
+            date,
+            snap.exists() ? (snap.data() as Record<string, unknown>) : undefined
+          );
+          onChange(mergeWorkOrdersIntoPlan(plan, workOrdersCache));
+        } catch (err) {
+          if (cancelled || currentRequest !== requestId) return;
+          onError?.(err instanceof Error ? err : new Error(String(err)));
+        }
+      })();
+    },
+    (error) => {
+      if (!cancelled) onError?.(error);
+    }
+  );
+
+  return () => {
+    cancelled = true;
+    unsubscribe();
+  };
 }
 
 export async function saveDispatchPlan(plan: DispatchPlan): Promise<void> {

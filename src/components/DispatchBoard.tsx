@@ -6,9 +6,9 @@ import {
   cancelMorningTextsForTruck,
   createMockDispatchJob,
   deleteDispatchJob,
-  getDispatchPlan,
   queueMorningTextsForTruck,
   saveDispatchPlan,
+  subscribeDispatchPlan,
 } from '../services/dispatchService';
 import {
   applyDefaultWindows,
@@ -202,19 +202,26 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
   const [error, setError] = useState<string | null>(null);
   const [callingStopId, setCallingStopId] = useState<string | null>(null);
   const [deletingStopId, setDeletingStopId] = useState<string | null>(null);
+  const [boardEpoch, setBoardEpoch] = useState(0);
 
   useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const loaded = await getDispatchPlan(selectedDate);
-        if (!cancelled) setPlan(loaded);
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
-          setPlan({
+    let gotFirstSnapshot = false;
+    setLoading(true);
+    setError(null);
+
+    const unsubscribe = subscribeDispatchPlan(
+      selectedDate,
+      (loaded) => {
+        setPlan(loaded);
+        if (!gotFirstSnapshot) {
+          gotFirstSnapshot = true;
+          setLoading(false);
+        }
+      },
+      (err) => {
+        setError(err.message);
+        setPlan((current) =>
+          current ?? {
             date: selectedDate,
             originAddress: DEFAULT_DISPATCH_ORIGIN,
             trucks: [
@@ -226,17 +233,29 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
             ],
             unassigned: [],
             notReady: [],
-          });
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+          }
+        );
+        setLoading(false);
       }
-    };
-    void load();
+    );
+
     return () => {
-      cancelled = true;
+      unsubscribe();
     };
-  }, [selectedDate]);
+  }, [selectedDate, boardEpoch]);
+
+  // Clear the per-stop "Calling…" button state once Firestore reports progress.
+  useEffect(() => {
+    if (!plan || !callingStopId) return;
+    for (const truck of plan.trucks) {
+      const stop = truck.stops.find((item) => item.id === callingStopId);
+      if (!stop?.voiceCallStatus) continue;
+      if (stop.voiceCallStatus !== 'queued') {
+        setCallingStopId(null);
+      }
+      break;
+    }
+  }, [plan, callingStopId]);
 
   const assignedCount = useMemo(() => {
     if (!plan) return 0;
@@ -531,9 +550,8 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
           <button
             type="button"
             disabled={saving}
-            onClick={async () => {
-              const refreshed = await getDispatchPlan(selectedDate);
-              setPlan(refreshed);
+            onClick={() => {
+              setBoardEpoch((value) => value + 1);
               setStatus('Reloaded jobs for this date.');
             }}
           >
