@@ -65,7 +65,7 @@
 
 .dispatch-board__lanes {
   display: grid;
-  grid-template-columns: minmax(220px, 260px) minmax(220px, 260px) 1fr;
+  grid-template-columns: minmax(240px, 280px) minmax(240px, 280px) minmax(0, 1fr);
   gap: 0.85rem;
   align-items: start;
 }
@@ -77,6 +77,9 @@
   border-radius: 6px;
   padding: 0.85rem;
   min-height: 280px;
+  min-width: 0;
+  height: fit-content;
+  overflow: visible;
 }
 
 .dispatch-lane h3,
@@ -101,10 +104,18 @@
 }
 
 .dispatch-board__trucks {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(180px, 1fr));
+  display: flex;
   gap: 0.75rem;
+  align-items: flex-start;
   overflow-x: auto;
+  overflow-y: visible;
+  padding-bottom: 0.5rem;
+}
+
+.dispatch-board__trucks > .dispatch-truck {
+  flex: 0 0 280px;
+  width: 280px;
+  max-width: 280px;
 }
 
 .dispatch-truck__header {
@@ -145,11 +156,12 @@
 
 .dispatch-truck__slot {
   display: grid;
-  grid-template-columns: 1.5rem 1fr;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
   gap: 0.35rem;
   align-items: start;
   margin-bottom: 0.65rem;
   position: relative;
+  min-width: 0;
 }
 
 .dispatch-truck__slot::before {
@@ -189,6 +201,10 @@
   background: var(--bg-primary);
   cursor: grab;
   transition: border-color 0.15s ease, transform 0.15s ease;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  word-break: break-word;
 }
 
 .dispatch-node:hover {
@@ -258,11 +274,16 @@
 
 .dispatch-node__window span {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.25rem;
+  min-width: 0;
 }
 
 .dispatch-node__window input[type='time'] {
+  flex: 1 1 5.5rem;
+  min-width: 0;
+  max-width: 100%;
   padding: 0.2rem;
   font-size: 0.7rem;
 }
@@ -292,18 +313,16 @@
   line-height: 1.25;
 }
 
-@media (max-width: 1200px) {
+@media (max-width: 1400px) {
   .dispatch-board__lanes {
     grid-template-columns: 1fr;
-  }
-
-  .dispatch-board__trucks {
-    grid-template-columns: repeat(2, minmax(200px, 1fr));
   }
 }
 
 @media (max-width: 700px) {
-  .dispatch-board__trucks {
-    grid-template-columns: 1fr;
+  .dispatch-board__trucks > .dispatch-truck {
+    flex-basis: min(280px, 85vw);
+    width: min(280px, 85vw);
+    max-width: min(280px, 85vw);
   }
 }
