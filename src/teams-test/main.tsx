@@ -69,6 +69,59 @@ function messageHasPdf(message: GraphMessage) {
   );
 }
 
+function formatChannelNoteLine(message: GraphMessage, body: string) {
+  const from = message.from?.user?.displayName ?? 'Unknown';
+  const stamp = new Date(message.createdDateTime).toLocaleString();
+  return `[${stamp} · ${from}] ${body}`;
+}
+
+/** Message body on the PDF post, plus other channel notes that mention this job. */
+function collectChannelNotesForWorkOrder(
+  channelMessages: GraphMessage[],
+  sourceMessageId: string,
+  workOrder?: Pick<WorkOrder, 'workOrderNumber' | 'customerName' | 'address'>
+): string {
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  const workOrderNumber = workOrder?.workOrderNumber?.trim().toLowerCase() || '';
+  const customerName = workOrder?.customerName?.trim().toLowerCase() || '';
+  const address = workOrder?.address?.trim().toLowerCase() || '';
+  const addressToken =
+    address.length >= 8 ? address.split(',')[0]?.trim() || address.slice(0, 24) : '';
+
+  for (const message of channelMessages) {
+    const body = stripHtml(message.body?.content ?? '').trim();
+    if (!body || seen.has(message.id)) continue;
+
+    const haystack = body.toLowerCase();
+    const isSource = message.id === sourceMessageId;
+    const matchesWorkOrder =
+      workOrderNumber.length >= 3 && haystack.includes(workOrderNumber);
+    const matchesCustomer =
+      customerName.length >= 3 && haystack.includes(customerName);
+    const matchesAddress =
+      addressToken.length >= 5 && haystack.includes(addressToken);
+
+    if (isSource || matchesWorkOrder || matchesCustomer || matchesAddress) {
+      seen.add(message.id);
+      lines.push(formatChannelNoteLine(message, body));
+    }
+  }
+
+  return lines.join('\n\n');
+}
+
+function mergeWorkOrderNotes(aiNotes: string, channelNotes: string) {
+  const cleanedAi = aiNotes.trim();
+  const cleanedChannel = channelNotes.trim();
+  if (!cleanedChannel) return cleanedAi;
+  if (!cleanedAi) return `Channel notes:\n${cleanedChannel}`;
+  if (cleanedAi.toLowerCase().includes(cleanedChannel.toLowerCase())) {
+    return cleanedAi;
+  }
+  return `${cleanedAi}\n\nChannel notes:\n${cleanedChannel}`;
+}
+
 function sortMessages(messages: GraphMessage[], sort: MessageSort) {
   const sorted = [...messages];
   sorted.sort((a, b) => {
@@ -346,11 +399,28 @@ function TeamsGraphTestApp() {
         );
       }
 
-      const workOrder = await extractStructuredWorkOrder(
+      const sourceMessage = messages.find((message) => message.id === messageId);
+      const sourceChannelNote = sourceMessage
+        ? stripHtml(sourceMessage.body?.content ?? '').trim()
+        : '';
+
+      const extracted = await extractStructuredWorkOrder(
         text,
         attachment.name ?? 'work-order.pdf',
-        await acquireToken()
+        await acquireToken(),
+        sourceChannelNote
       );
+
+      const relatedChannelNotes = collectChannelNotesForWorkOrder(
+        messages,
+        messageId,
+        extracted
+      );
+      const workOrder: WorkOrder = {
+        ...extracted,
+        notes: mergeWorkOrderNotes(extracted.notes, relatedChannelNotes),
+      };
+
       setProcessedWorkOrders((current) => ({
         ...current,
         [key]: { workOrder, status: 'draft' },

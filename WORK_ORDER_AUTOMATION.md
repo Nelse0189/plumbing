@@ -11,17 +11,20 @@ that can be opened in Google Sheets.
 3. The PDF is downloaded from the team's SharePoint drive and its text is
    extracted locally in the browser.
 4. That text—not the PDF image—is sent to the `extractWorkOrder` Firebase
-   callable. `gpt-5.6-luna` returns clean plumber-facing fields (customer, phone,
-   address, installation/job type, requested date/time, notes).
-5. A staff member verifies the work-order number, customer, phone, address, job
+   callable with the Teams message note. `gpt-5.6-luna` returns clean
+   plumber-facing fields (customer, phone, address, installation/job type,
+   requested date/time, notes).
+5. Matching channel notes (same post, or other posts mentioning the work-order
+   number / customer / address) are appended under **Channel notes**.
+6. A staff member verifies the work-order number, customer, phone, address, job
    type, date, and time.
-6. **Save to unscheduled jobs** stores the reviewed record without contacting
+7. **Save to unscheduled jobs** stores the reviewed record without contacting
    anyone.
-7. **Schedule by text** sends available times only to `SMS_TEST_RECIPIENT`.
-8. A reply selecting a valid time moves the work order into the scheduled
+8. **Schedule by text** sends available times only to `SMS_TEST_RECIPIENT`.
+9. A reply selecting a valid time moves the work order into the scheduled
    database and truck schedule.
-9. **Export CSV for Google Sheets** downloads all reviewed rows in a
-   Sheets-compatible format.
+10. **Export CSV for Google Sheets** downloads all reviewed rows in a
+    Sheets-compatible format.
 
 AI output is never scheduled automatically. Human review is required because
 PDF extraction can misread names, dates, phone numbers, or handwritten/scanned

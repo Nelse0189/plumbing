@@ -9,17 +9,24 @@ const functions = getFunctions(app);
 export async function extractWorkOrder(
   text: string,
   sourceFileName: string,
-  microsoftAccessToken: string
+  microsoftAccessToken: string,
+  channelNote = ''
 ): Promise<WorkOrder> {
   const callable = httpsCallable<
     {
       text: string;
       sourceFileName: string;
       microsoftAccessToken: string;
+      channelNote?: string;
     },
     WorkOrder
   >(functions, 'extractWorkOrder');
-  const result = await callable({ text, sourceFileName, microsoftAccessToken });
+  const result = await callable({
+    text,
+    sourceFileName,
+    microsoftAccessToken,
+    channelNote,
+  });
   return result.data;
 }
 

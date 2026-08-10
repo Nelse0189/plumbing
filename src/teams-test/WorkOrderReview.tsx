@@ -67,7 +67,7 @@ export default function WorkOrderReview({
       </div>
 
       <label className="teams-test__work-order-notes">
-        <span>Notes</span>
+        <span>Notes (includes matching Teams channel notes)</span>
         <textarea
           value={workOrder.notes}
           onChange={(event) => update('notes', event.target.value)}

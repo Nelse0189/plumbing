@@ -213,11 +213,13 @@ export const extractWorkOrder = onCall(
     const input = request.data as {
       text?: unknown;
       sourceFileName?: unknown;
+      channelNote?: unknown;
       microsoftAccessToken?: unknown;
     };
     await requireMicrosoftUser(input.microsoftAccessToken);
     const text = asTrimmedString(input.text);
     const sourceFileName = asTrimmedString(input.sourceFileName);
+    const channelNote = asTrimmedString(input.channelNote);
 
     if (text.length < 20) {
       throw new HttpsError(
@@ -258,19 +260,30 @@ export const extractWorkOrder = onCall(
               "- appointmentDate: requested/install date as YYYY-MM-DD when a date is present",
               "- appointmentTime: requested time as HH:MM 24-hour when a time is present; otherwise empty",
               "- workOrderNumber: document/work-order/job number if present",
-              "- notes: short plumber-facing summary of installation details, access notes, equipment, or special instructions. Do not paste the raw PDF. Keep it concise.",
+              "- notes: short plumber-facing summary of installation details, access notes, equipment, or special instructions from the PDF, plus any relevant Teams channel notes. Do not paste the raw PDF. Keep it concise.",
               "- confidence: 0 to 1 for how complete and certain the extraction is",
+              "If <channel-note> is present, treat it as dispatcher/plumber commentary for this job and fold useful details into notes (and into date/time/phone/address only when clearly stated there).",
             ].join(" "),
           },
           {
             role: "user",
-            content: `<work-order-text sourceFileName="${sourceFileName.replace(
-              /"/g,
-              ""
-            )}">\n${text.replace(
-              /<\/?work-order(?:-text)?>/gi,
-              ""
-            )}\n</work-order-text>`,
+            content: [
+              `<work-order-text sourceFileName="${sourceFileName.replace(
+                /"/g,
+                ""
+              )}">\n${text.replace(
+                /<\/?work-order(?:-text)?>/gi,
+                ""
+              )}\n</work-order-text>`,
+              channelNote
+                ? `<channel-note>\n${channelNote.replace(
+                    /<\/?channel-note>/gi,
+                    ""
+                  )}\n</channel-note>`
+                : "",
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
           },
         ],
         response_format: {
