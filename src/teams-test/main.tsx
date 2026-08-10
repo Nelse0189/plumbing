@@ -637,10 +637,10 @@ function TeamsGraphTestApp() {
                                   }
                                 >
                                   {processingKeys[key]
-                                    ? 'Processing…'
+                                    ? 'Extracting…'
                                     : processedWorkOrders[key]
-                                      ? 'Processed'
-                                      : 'Process work order'}
+                                      ? 'Extracted'
+                                      : 'Extract clean fields'}
                                 </button>
                               </div>
                             </div>

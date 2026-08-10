@@ -7,11 +7,12 @@ that can be opened in Google Sheets.
 ## Workflow
 
 1. Open `teams-test.html`, sign in to Microsoft, and choose a team/channel.
-2. Select **Process work order** on a PDF attachment.
+2. Select **Extract clean fields** on a PDF attachment.
 3. The PDF is downloaded from the team's SharePoint drive and its text is
    extracted locally in the browser.
-4. The text—not the PDF file—is sent to the `extractWorkOrder` Firebase callable
-   function. OpenAI returns structured fields.
+4. That text—not the PDF image—is sent to the `extractWorkOrder` Firebase
+   callable. `gpt-5.6` returns clean plumber-facing fields (customer, phone,
+   address, installation/job type, requested date/time, notes).
 5. A staff member verifies the work-order number, customer, phone, address, job
    type, date, and time.
 6. **Save to unscheduled jobs** stores the reviewed record without contacting

@@ -17,11 +17,11 @@ const fields: Array<{
 }> = [
   { key: 'workOrderNumber', label: 'Work order number' },
   { key: 'customerName', label: 'Customer name' },
-  { key: 'phone', label: 'Phone' },
-  { key: 'address', label: 'Address' },
-  { key: 'jobType', label: 'Job type' },
-  { key: 'appointmentDate', label: 'Job date', type: 'date' },
-  { key: 'appointmentTime', label: 'Job time', type: 'time' },
+  { key: 'phone', label: 'Phone number' },
+  { key: 'address', label: 'Service address' },
+  { key: 'jobType', label: 'Installation / job type' },
+  { key: 'appointmentDate', label: 'Requested date', type: 'date' },
+  { key: 'appointmentTime', label: 'Requested time', type: 'time' },
 ];
 
 export default function WorkOrderReview({
@@ -39,7 +39,7 @@ export default function WorkOrderReview({
     <article className="teams-test__work-order">
       <div className="teams-test__work-order-title">
         <div>
-          <strong>Review extracted work order</strong>
+          <strong>Review clean work-order fields</strong>
           <span>{workOrder.sourceFileName}</span>
         </div>
         {workOrder.confidence !== undefined && (
