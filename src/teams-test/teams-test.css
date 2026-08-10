@@ -116,6 +116,33 @@
   margin-bottom: 0.75rem;
 }
 
+.teams-test__messages-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.teams-test__messages-header h2 {
+  margin-bottom: 0;
+}
+
+.teams-test__sort {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.teams-test__sort select {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+  min-width: 9.5rem;
+}
+
 .teams-test__panel ul,
 .teams-test__message-list {
   list-style: none;

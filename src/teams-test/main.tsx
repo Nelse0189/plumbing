@@ -1,4 +1,11 @@
-import { StrictMode, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  StrictMode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   acquireToken,
@@ -50,6 +57,38 @@ function stripHtml(html: string) {
   return doc.body.textContent?.trim() ?? '';
 }
 
+type MessageSort = 'newest' | 'oldest' | 'sender' | 'has-pdf';
+
+function messageHasPdf(message: GraphMessage) {
+  return Boolean(
+    message.attachments?.some(
+      (attachment) =>
+        attachment.name?.toLowerCase().endsWith('.pdf') ||
+        attachment.contentType === 'application/pdf'
+    )
+  );
+}
+
+function sortMessages(messages: GraphMessage[], sort: MessageSort) {
+  const sorted = [...messages];
+  sorted.sort((a, b) => {
+    if (sort === 'sender') {
+      const left = (a.from?.user?.displayName ?? '').toLocaleLowerCase();
+      const right = (b.from?.user?.displayName ?? '').toLocaleLowerCase();
+      const byName = left.localeCompare(right);
+      if (byName !== 0) return byName;
+    }
+    if (sort === 'has-pdf') {
+      const byPdf = Number(messageHasPdf(b)) - Number(messageHasPdf(a));
+      if (byPdf !== 0) return byPdf;
+    }
+    const leftTime = new Date(a.createdDateTime).getTime();
+    const rightTime = new Date(b.createdDateTime).getTime();
+    return sort === 'oldest' ? leftTime - rightTime : rightTime - leftTime;
+  });
+  return sorted;
+}
+
 // This standalone entry intentionally declares and renders its only component.
 // eslint-disable-next-line react-refresh/only-export-components
 function TeamsGraphTestApp() {
@@ -80,6 +119,12 @@ function TeamsGraphTestApp() {
 
   const [selectedTeamName, setSelectedTeamName] = useState('');
   const [selectedChannelName, setSelectedChannelName] = useState('');
+  const [messageSort, setMessageSort] = useState<MessageSort>('newest');
+
+  const sortedMessages = useMemo(
+    () => sortMessages(messages, messageSort),
+    [messages, messageSort]
+  );
 
   const refreshWorkOrders = useCallback(async (showLoading = false) => {
     if (!getActiveAccount()) return;
@@ -497,12 +542,30 @@ function TeamsGraphTestApp() {
             </aside>
 
             <main className="teams-test__messages">
-            <h2>
-              Messages
-              {selectedChannelName
-                ? ` — ${selectedTeamName} / ${selectedChannelName}`
-                : ''}
-            </h2>
+            <div className="teams-test__messages-header">
+              <h2>
+                Messages
+                {selectedChannelName
+                  ? ` — ${selectedTeamName} / ${selectedChannelName}`
+                  : ''}
+              </h2>
+              {messages.length > 0 && (
+                <label className="teams-test__sort">
+                  Sort
+                  <select
+                    value={messageSort}
+                    onChange={(event) =>
+                      setMessageSort(event.target.value as MessageSort)
+                    }
+                  >
+                    <option value="newest">Newest first</option>
+                    <option value="oldest">Oldest first</option>
+                    <option value="sender">Sender A–Z</option>
+                    <option value="has-pdf">PDFs first</option>
+                  </select>
+                </label>
+              )}
+            </div>
 
             {messages.length === 0 ? (
               <p className="teams-test__hint">
@@ -510,7 +573,7 @@ function TeamsGraphTestApp() {
               </p>
             ) : (
               <ul className="teams-test__message-list">
-                {messages.map((message) => (
+                {sortedMessages.map((message) => (
                   <li key={message.id} className="teams-test__message">
                     <div className="teams-test__message-meta">
                       <strong>{message.from?.user?.displayName ?? 'Unknown'}</strong>
