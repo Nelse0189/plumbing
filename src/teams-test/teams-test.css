@@ -214,6 +214,13 @@
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.teams-test__import-status {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  white-space: nowrap;
 }
 
 .teams-test__attachment-links {

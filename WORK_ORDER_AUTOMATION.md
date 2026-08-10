@@ -7,24 +7,19 @@ that can be opened in Google Sheets.
 ## Workflow
 
 1. Open `teams-test.html`, sign in to Microsoft, and choose a team/channel.
-2. Select **Extract clean fields** on a PDF attachment.
-3. The PDF is downloaded from the team's SharePoint drive and its text is
-   extracted locally in the browser.
-4. That text—not the PDF image—is sent to the `extractWorkOrder` Firebase
-   callable with the Teams message note. `gpt-5.6-luna` returns clean
-   plumber-facing fields (customer, phone, address, installation/job type,
-   requested date/time, notes).
-5. Matching channel notes (same post, or other posts mentioning the work-order
+2. Channel PDFs are imported automatically: Firebase cache is checked first;
+   uncached PDFs are downloaded, text-extracted, cleaned with `gpt-5.6-luna`,
+   and saved to `workOrders`.
+3. Matching channel notes (same post, or other posts mentioning the work-order
    number / customer / address) are appended under **Channel notes**.
-6. A staff member verifies the work-order number, customer, phone, address, job
-   type, date, and time.
-7. **Save to unscheduled jobs** stores the reviewed record without contacting
-   anyone.
-8. **Schedule by text** sends available times only to `SMS_TEST_RECIPIENT`.
-9. A reply selecting a valid time moves the work order into the scheduled
+4. Incomplete imports land in **Needs review**; complete ones in **Unscheduled**.
+5. Staff can edit a record and click **Update Firebase job** if corrections are
+   needed. Use **Re-import** only to force a fresh AI pass.
+6. **Schedule by text** sends available times only to `SMS_TEST_RECIPIENT`.
+7. A reply selecting a valid time moves the work order into the scheduled
    database and truck schedule.
-10. **Export CSV for Google Sheets** downloads all reviewed rows in a
-    Sheets-compatible format.
+8. **Export CSV for Google Sheets** downloads reviewed rows in a
+   Sheets-compatible format.
 
 AI output is never scheduled automatically. Human review is required because
 PDF extraction can misread names, dates, phone numbers, or handwritten/scanned

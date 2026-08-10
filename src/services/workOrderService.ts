@@ -30,34 +30,72 @@ export async function extractWorkOrder(
   return result.data;
 }
 
+export interface ChannelPdfImportResult {
+  cached: boolean;
+  workOrderId: string;
+  workOrder: StoredWorkOrder;
+}
+
+export async function importChannelPdfWorkOrder(input: {
+  text: string;
+  channelNote?: string;
+  sourceFileName: string;
+  teamId: string;
+  channelId: string;
+  messageId: string;
+  attachmentId: string;
+  force?: boolean;
+  microsoftAccessToken: string;
+}): Promise<ChannelPdfImportResult> {
+  const callable = httpsCallable<typeof input, ChannelPdfImportResult>(
+    functions,
+    'importChannelPdfWorkOrder'
+  );
+  const result = await callable(input);
+  return result.data;
+}
+
 export async function saveWorkOrder(
   workOrder: WorkOrder,
-  microsoftAccessToken: string
+  microsoftAccessToken: string,
+  workOrderId?: string
 ): Promise<{
   success: boolean;
   workOrderId: string;
   status: 'unscheduled';
 }> {
   const callable = httpsCallable<
-    { workOrder: WorkOrder; microsoftAccessToken: string },
+    {
+      workOrder: WorkOrder;
+      workOrderId?: string;
+      microsoftAccessToken: string;
+    },
     {
       success: boolean;
       workOrderId: string;
       status: 'unscheduled';
     }
   >(functions, 'saveWorkOrder');
-  const result = await callable({ workOrder, microsoftAccessToken });
+  const result = await callable({
+    workOrder,
+    workOrderId,
+    microsoftAccessToken,
+  });
   return result.data;
 }
 
 export async function listWorkOrders(
-  microsoftAccessToken: string
+  microsoftAccessToken: string,
+  channelId?: string
 ): Promise<StoredWorkOrder[]> {
   const callable = httpsCallable<
-    { microsoftAccessToken: string },
+    { microsoftAccessToken: string; channelId?: string },
     StoredWorkOrder[]
   >(functions, 'listWorkOrders');
-  const result = await callable({ microsoftAccessToken });
+  const result = await callable({
+    microsoftAccessToken,
+    ...(channelId ? { channelId } : {}),
+  });
   return result.data;
 }
 
@@ -84,4 +122,3 @@ export async function initiateWorkOrderScheduling(
   const result = await callable({ workOrderId, microsoftAccessToken });
   return result.data;
 }
-

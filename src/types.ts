@@ -40,12 +40,17 @@ export interface WorkOrder {
   sourceFileName: string;
   smsConsent: boolean;
   confidence?: number;
+  teamsTeamId?: string;
+  teamsChannelId?: string;
+  teamsMessageId?: string;
+  teamsAttachmentId?: string;
 }
 
 export interface StoredWorkOrder extends WorkOrder {
   id: string;
-  status: 'unscheduled' | 'scheduling' | 'scheduled';
+  status: 'needs_review' | 'unscheduled' | 'scheduling' | 'scheduled';
   selectedTime?: string;
+  cached?: boolean;
 }
 
 /** 4-hour arrival window shown to the customer (HH:MM, 24h). */

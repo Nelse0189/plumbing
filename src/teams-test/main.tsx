@@ -29,7 +29,7 @@ import {
 import { extractPdfText } from './pdf';
 import WorkOrderReview from './WorkOrderReview';
 import {
-  extractWorkOrder as extractStructuredWorkOrder,
+  importChannelPdfWorkOrder,
   initiateWorkOrderScheduling,
   listWorkOrders,
   saveWorkOrder,
@@ -48,7 +48,9 @@ interface PdfResult {
 
 interface ProcessedWorkOrder {
   workOrder: WorkOrder;
-  status: 'draft' | 'saving' | 'saved';
+  workOrderId: string;
+  cached: boolean;
+  status: 'importing' | 'draft' | 'saving' | 'saved';
   error?: string;
 }
 
@@ -156,16 +158,17 @@ function TeamsGraphTestApp() {
   const [pdfResults, setPdfResults] = useState<Record<string, PdfResult>>({});
   const pdfDataRef = useRef<Record<string, ArrayBuffer>>({});
   const pdfUrlsRef = useRef<Record<string, string>>({});
-  const [processingKeys, setProcessingKeys] = useState<Record<string, boolean>>({});
   const [processedWorkOrders, setProcessedWorkOrders] = useState<
     Record<string, ProcessedWorkOrder>
   >({});
   const [storedWorkOrders, setStoredWorkOrders] = useState<StoredWorkOrder[]>([]);
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
+  const [channelImportStatus, setChannelImportStatus] = useState<string | null>(null);
   const [schedulingWorkOrderId, setSchedulingWorkOrderId] = useState<string | null>(
     null
   );
+  const channelImportGenerationRef = useRef(0);
 
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
@@ -263,7 +266,10 @@ function TeamsGraphTestApp() {
     setSelectedChannelId(null);
     setSelectedChannelName('');
     setMessages([]);
+    setProcessedWorkOrders({});
+    setChannelImportStatus(null);
     clearPdfCache();
+    channelImportGenerationRef.current += 1;
 
     try {
       const response = await getTeamChannels(team.id);
@@ -273,17 +279,243 @@ function TeamsGraphTestApp() {
     }
   };
 
+  const emptyWorkOrder = (sourceFileName: string): WorkOrder => ({
+    workOrderNumber: '',
+    customerName: '',
+    phone: '',
+    address: '',
+    jobType: '',
+    appointmentDate: '',
+    appointmentTime: '',
+    notes: '',
+    sourceFileName,
+    smsConsent: false,
+  });
+
+  const importPdfAttachment = useCallback(
+    async (
+      teamId: string,
+      channelId: string,
+      channelMessages: GraphMessage[],
+      messageId: string,
+      attachment: GraphAttachment,
+      options?: { force?: boolean; cachedWorkOrder?: StoredWorkOrder }
+    ) => {
+      const key = `${messageId}:${attachment.id}`;
+      const force = options?.force === true;
+
+      if (options?.cachedWorkOrder && !force) {
+        const relatedChannelNotes = collectChannelNotesForWorkOrder(
+          channelMessages,
+          messageId,
+          options.cachedWorkOrder
+        );
+        setProcessedWorkOrders((current) => ({
+          ...current,
+          [key]: {
+            workOrder: {
+              ...options.cachedWorkOrder!,
+              notes: mergeWorkOrderNotes(
+                options.cachedWorkOrder!.notes,
+                relatedChannelNotes
+              ),
+              teamsTeamId: teamId,
+              teamsChannelId: channelId,
+              teamsMessageId: messageId,
+              teamsAttachmentId: attachment.id,
+            },
+            workOrderId: options.cachedWorkOrder!.id,
+            cached: true,
+            status: 'saved',
+            error: undefined,
+          },
+        }));
+        return { cached: true as const, workOrderId: options.cachedWorkOrder.id };
+      }
+
+      setProcessedWorkOrders((current) => ({
+        ...current,
+        [key]: {
+          workOrder: current[key]?.workOrder || emptyWorkOrder(attachment.name ?? 'work-order.pdf'),
+          workOrderId: current[key]?.workOrderId || '',
+          cached: false,
+          status: 'importing',
+          error: undefined,
+        },
+      }));
+
+      try {
+        const data = await downloadChannelAttachment(teamId, channelId, attachment);
+        const bytes = data.slice(0);
+        pdfDataRef.current[key] = bytes;
+        if (pdfUrlsRef.current[key]) URL.revokeObjectURL(pdfUrlsRef.current[key]);
+        const previewUrl = URL.createObjectURL(
+          new Blob([bytes], { type: 'application/pdf' })
+        );
+        pdfUrlsRef.current[key] = previewUrl;
+        const text = await extractPdfText(bytes.slice(0));
+        if (!text.trim()) {
+          throw new Error(
+            'This appears to be a scanned PDF. OCR is required before AI import.'
+          );
+        }
+        setPdfResults((current) => ({
+          ...current,
+          [key]: {
+            ...current[key],
+            previewUrl,
+            text: text || 'No readable text was found in this PDF.',
+            loading: false,
+          },
+        }));
+
+        const sourceChannelNotes = collectChannelNotesForWorkOrder(
+          channelMessages,
+          messageId
+        );
+        const imported = await importChannelPdfWorkOrder({
+          text,
+          channelNote: sourceChannelNotes,
+          sourceFileName: attachment.name ?? 'work-order.pdf',
+          teamId,
+          channelId,
+          messageId,
+          attachmentId: attachment.id,
+          force,
+          microsoftAccessToken: await acquireToken(),
+        });
+
+        const relatedChannelNotes = collectChannelNotesForWorkOrder(
+          channelMessages,
+          messageId,
+          imported.workOrder
+        );
+        const workOrder: WorkOrder = {
+          ...imported.workOrder,
+          notes: mergeWorkOrderNotes(imported.workOrder.notes, relatedChannelNotes),
+          teamsTeamId: teamId,
+          teamsChannelId: channelId,
+          teamsMessageId: messageId,
+          teamsAttachmentId: attachment.id,
+        };
+
+        setProcessedWorkOrders((current) => ({
+          ...current,
+          [key]: {
+            workOrder,
+            workOrderId: imported.workOrderId,
+            cached: imported.cached,
+            status: 'saved',
+            error: undefined,
+          },
+        }));
+        return imported;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setProcessedWorkOrders((current) => ({
+          ...current,
+          [key]: {
+            workOrder:
+              current[key]?.workOrder ||
+              emptyWorkOrder(attachment.name ?? 'work-order.pdf'),
+            workOrderId: current[key]?.workOrderId || '',
+            cached: false,
+            status: 'draft',
+            error: message,
+          },
+        }));
+        setPdfResults((current) => ({
+          ...current,
+          [key]: { ...current[key], error: message, loading: false },
+        }));
+        return null;
+      }
+    },
+    []
+  );
+
+  const autoImportChannelPdfs = useCallback(
+    async (
+      teamId: string,
+      channelId: string,
+      channelMessages: GraphMessage[]
+    ) => {
+      const generation = ++channelImportGenerationRef.current;
+      const pdfAttachments = channelMessages.flatMap((message) =>
+        (message.attachments || [])
+          .filter(
+            (attachment) =>
+              attachment.name?.toLowerCase().endsWith('.pdf') ||
+              attachment.contentType === 'application/pdf'
+          )
+          .map((attachment) => ({ message, attachment }))
+      );
+
+      if (pdfAttachments.length === 0) {
+        setChannelImportStatus(null);
+        return;
+      }
+
+      setChannelImportStatus(
+        `Loading ${pdfAttachments.length} PDF work order${
+          pdfAttachments.length === 1 ? '' : 's'
+        } from Firebase / AI…`
+      );
+
+      let cachedRecords: StoredWorkOrder[] = [];
+      try {
+        cachedRecords = await listWorkOrders(await acquireToken(), channelId);
+      } catch {
+        cachedRecords = [];
+      }
+      const cachedByAttachment = new Map(
+        cachedRecords
+          .filter((item) => item.teamsMessageId && item.teamsAttachmentId)
+          .map((item) => [`${item.teamsMessageId}:${item.teamsAttachmentId}`, item])
+      );
+
+      let importedCount = 0;
+      let cachedCount = 0;
+      for (const item of pdfAttachments) {
+        if (generation !== channelImportGenerationRef.current) return;
+        const key = `${item.message.id}:${item.attachment.id}`;
+        const result = await importPdfAttachment(
+          teamId,
+          channelId,
+          channelMessages,
+          item.message.id,
+          item.attachment,
+          { cachedWorkOrder: cachedByAttachment.get(key) }
+        );
+        if (!result) continue;
+        if (result.cached) cachedCount += 1;
+        else importedCount += 1;
+      }
+
+      if (generation !== channelImportGenerationRef.current) return;
+      setChannelImportStatus(
+        `Channel jobs ready: ${importedCount} imported, ${cachedCount} loaded from Firebase.`
+      );
+      await refreshWorkOrders();
+    },
+    [importPdfAttachment, refreshWorkOrders]
+  );
+
   const handleSelectChannel = async (channel: GraphChannel) => {
     if (!selectedTeamId) return;
     setError(null);
     setSelectedChannelId(channel.id);
     setSelectedChannelName(channel.displayName);
     setMessages([]);
+    setProcessedWorkOrders({});
+    setChannelImportStatus(null);
     clearPdfCache();
+    channelImportGenerationRef.current += 1;
 
     try {
       const response = await getChannelMessages(selectedTeamId, channel.id);
       setMessages(response.value);
+      void autoImportChannelPdfs(selectedTeamId, channel.id, response.value);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -366,74 +598,11 @@ function TeamsGraphTestApp() {
     }
   };
 
-  const readPdfText = async (
-    messageId: string,
-    attachment: GraphAttachment
-  ): Promise<string> => {
-    const result = await loadPdfAttachment(messageId, attachment, {
-      extractText: true,
-      showPreview: true,
-    });
-    return result.text || 'No readable text was found in this PDF.';
-  };
-
   const viewPdf = async (messageId: string, attachment: GraphAttachment) => {
     await loadPdfAttachment(messageId, attachment, {
       extractText: false,
       showPreview: true,
     });
-  };
-
-  const handleProcessWorkOrder = async (
-    messageId: string,
-    attachment: GraphAttachment
-  ) => {
-    const key = `${messageId}:${attachment.id}`;
-    setProcessingKeys((current) => ({ ...current, [key]: true }));
-
-    try {
-      const text = pdfResults[key]?.text ?? (await readPdfText(messageId, attachment));
-      if (text === 'No readable text was found in this PDF.') {
-        throw new Error(
-          'This appears to be a scanned PDF. OCR is required before AI extraction.'
-        );
-      }
-
-      const sourceMessage = messages.find((message) => message.id === messageId);
-      const sourceChannelNote = sourceMessage
-        ? stripHtml(sourceMessage.body?.content ?? '').trim()
-        : '';
-
-      const extracted = await extractStructuredWorkOrder(
-        text,
-        attachment.name ?? 'work-order.pdf',
-        await acquireToken(),
-        sourceChannelNote
-      );
-
-      const relatedChannelNotes = collectChannelNotesForWorkOrder(
-        messages,
-        messageId,
-        extracted
-      );
-      const workOrder: WorkOrder = {
-        ...extracted,
-        notes: mergeWorkOrderNotes(extracted.notes, relatedChannelNotes),
-      };
-
-      setProcessedWorkOrders((current) => ({
-        ...current,
-        [key]: { workOrder, status: 'draft' },
-      }));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setPdfResults((current) => ({
-        ...current,
-        [key]: { ...current[key], error: message },
-      }));
-    } finally {
-      setProcessingKeys((current) => ({ ...current, [key]: false }));
-    }
   };
 
   const handleSaveWorkOrder = async (key: string) => {
@@ -446,11 +615,17 @@ function TeamsGraphTestApp() {
     }));
 
     try {
-      await saveWorkOrder(processed.workOrder, await acquireToken());
+      const result = await saveWorkOrder(
+        processed.workOrder,
+        await acquireToken(),
+        processed.workOrderId || undefined
+      );
       setProcessedWorkOrders((current) => ({
         ...current,
         [key]: {
           ...current[key],
+          workOrderId: result.workOrderId,
+          cached: true,
           status: 'saved',
           error: undefined,
         },
@@ -466,6 +641,22 @@ function TeamsGraphTestApp() {
         },
       }));
     }
+  };
+
+  const handleReimportWorkOrder = async (
+    messageId: string,
+    attachment: GraphAttachment
+  ) => {
+    if (!selectedTeamId || !selectedChannelId) return;
+    await importPdfAttachment(
+      selectedTeamId,
+      selectedChannelId,
+      messages,
+      messageId,
+      attachment,
+      { force: true }
+    );
+    await refreshWorkOrders();
   };
 
   const handleScheduleWorkOrder = async (workOrderId: string) => {
@@ -636,6 +827,9 @@ function TeamsGraphTestApp() {
                 </label>
               )}
             </div>
+            {channelImportStatus && (
+              <p className="teams-test__hint">{channelImportStatus}</p>
+            )}
 
             {messages.length === 0 ? (
               <p className="teams-test__hint">
@@ -659,12 +853,26 @@ function TeamsGraphTestApp() {
                       .map((attachment) => {
                         const key = `${message.id}:${attachment.id}`;
                         const result = pdfResults[key];
+                        const processed = processedWorkOrders[key];
+                        const importLabel =
+                          processed?.status === 'importing'
+                            ? 'Importing into Firebase…'
+                            : processed?.error
+                              ? 'Import failed'
+                              : processed?.cached
+                                ? 'Loaded from Firebase'
+                                : processed?.status === 'saved'
+                                  ? 'Saved in Firebase'
+                                  : 'Waiting for auto-import';
 
                         return (
                           <div key={attachment.id} className="teams-test__attachment">
                             <div className="teams-test__attachment-header">
                               <span>PDF: {attachment.name ?? 'Attachment'}</span>
                               <div className="teams-test__attachment-actions">
+                                <span className="teams-test__import-status">
+                                  {importLabel}
+                                </span>
                                 <button
                                   type="button"
                                   disabled={result?.loading}
@@ -682,35 +890,18 @@ function TeamsGraphTestApp() {
                                 </button>
                                 <button
                                   type="button"
-                                  disabled={result?.loading}
-                                  onClick={() => {
-                                    void readPdfText(message.id, attachment).catch(
-                                      () => undefined
-                                    );
-                                  }}
-                                >
-                                  {result?.loading
-                                    ? 'Reading…'
-                                    : result?.text
-                                      ? 'Read again'
-                                      : 'Read text'}
-                                </button>
-                                <button
-                                  type="button"
                                   disabled={
                                     result?.loading ||
-                                    processingKeys[key] ||
-                                    Boolean(processedWorkOrders[key])
+                                    processed?.status === 'importing'
                                   }
-                                  onClick={() =>
-                                    handleProcessWorkOrder(message.id, attachment)
-                                  }
+                                  onClick={() => {
+                                    void handleReimportWorkOrder(
+                                      message.id,
+                                      attachment
+                                    ).catch(() => undefined);
+                                  }}
                                 >
-                                  {processingKeys[key]
-                                    ? 'Extracting…'
-                                    : processedWorkOrders[key]
-                                      ? 'Extracted'
-                                      : 'Extract clean fields'}
+                                  Re-import
                                 </button>
                               </div>
                             </div>
@@ -790,15 +981,18 @@ function TeamsGraphTestApp() {
             {queueError && <div className="teams-test__error">{queueError}</div>}
 
             <div className="teams-test__job-columns">
-              {(['unscheduled', 'scheduling', 'scheduled'] as const).map(
-                (status) => {
+              {(
+                ['needs_review', 'unscheduled', 'scheduling', 'scheduled'] as const
+              ).map((status) => {
                   const jobs = storedWorkOrders.filter(
                     (workOrder) => workOrder.status === status
                   );
                   return (
                     <div key={status} className="teams-test__job-column">
                       <h3>
-                        {status === 'unscheduled'
+                        {status === 'needs_review'
+                          ? 'Needs review'
+                          : status === 'unscheduled'
                           ? 'Unscheduled'
                           : status === 'scheduling'
                             ? 'Awaiting text reply'
@@ -867,9 +1061,10 @@ function TeamsGraphTestApp() {
             <section className="teams-test__processed">
               <div className="teams-test__processed-header">
                 <div>
-                  <h2>Processed work orders</h2>
+                  <h2>Channel work orders</h2>
                   <p>
-                    Review each record before scheduling customer communication.
+                    PDFs in this channel are imported automatically into Firebase.
+                    Edit here only if something needs correction.
                   </p>
                 </div>
                 <button type="button" onClick={exportWorkOrdersCsv}>
@@ -882,6 +1077,7 @@ function TeamsGraphTestApp() {
                   key={key}
                   workOrder={processed.workOrder}
                   status={processed.status}
+                  cached={processed.cached}
                   error={processed.error}
                   onChange={(workOrder) =>
                     setProcessedWorkOrders((current) => ({
