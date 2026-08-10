@@ -7,6 +7,7 @@ import formidable from "formidable";
 // @ts-ignore - mailparser doesn't have types
 import { simpleParser } from "mailparser";
 import { google } from "googleapis";
+import { createHash } from "node:crypto";
 import * as dotenv from "dotenv";
 import { defineString } from "firebase-functions/params";
 import { setGlobalOptions } from "firebase-functions/v2";
@@ -499,26 +500,18 @@ export const importChannelPdfWorkOrder = onCall(
     const recordId = channelAttachmentWorkOrderId(messageId, attachmentId);
     const recordRef = db.collection("workOrders").doc(recordId);
     const existing = await recordRef.get();
+    const threadHash = createHash("sha256").update(channelNote).digest("hex");
 
-    if (existing.exists && !force) {
+    if (
+      existing.exists &&
+      !force &&
+      asTrimmedString(existing.data()?.teamsThreadHash) === threadHash
+    ) {
       const existingData = existing.data() || {};
-      const existingNotes = asTrimmedString(existingData.notes);
-      const notesAlreadyIncluded =
-        !channelNote ||
-        existingNotes.toLowerCase().includes(channelNote.toLowerCase());
-      if (!notesAlreadyIncluded) {
-        await recordRef.update({
-          notes: existingNotes
-            ? `${existingNotes}\n\nChannel notes:\n${channelNote}`
-            : `Channel notes:\n${channelNote}`,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      }
-      const cachedRecord = notesAlreadyIncluded ? existing : await recordRef.get();
       return {
         cached: true,
         workOrderId: recordId,
-        workOrder: serializeWorkOrderRecord(recordId, cachedRecord.data() || {}),
+        workOrder: serializeWorkOrderRecord(recordId, existingData),
       };
     }
 
@@ -564,7 +557,7 @@ export const importChannelPdfWorkOrder = onCall(
               "- workOrderNumber: document/work-order/job number if present",
               "- notes: short plumber-facing summary of installation details, access notes, equipment, or special instructions from the PDF, plus any relevant Teams channel notes. Do not paste the raw PDF. Keep it concise.",
               "- confidence: 0 to 1 for how complete and certain the extraction is",
-              "If <channel-note> is present, treat it as dispatcher/plumber commentary for this job and fold useful details into notes (and into date/time/phone/address only when clearly stated there).",
+              "If <channel-note> is present, it contains the Teams post plus replies for this job. Treat a clearly stated requested, booked, or rescheduled date/time in the replies as the scheduling source of truth and extract it into appointmentDate/appointmentTime. Also fold useful thread details into notes.",
             ].join(" "),
           },
           {
@@ -657,6 +650,7 @@ export const importChannelPdfWorkOrder = onCall(
         teamsChannelId: channelId,
         teamsMessageId: messageId,
         teamsAttachmentId: attachmentId,
+        teamsThreadHash: threadHash,
         autoImported: true,
         importedByMicrosoftUserId: microsoftUser.id,
         importedBy: microsoftUser.userPrincipalName || "",

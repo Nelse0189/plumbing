@@ -334,39 +334,10 @@ function TeamsGraphTestApp() {
       channelMessages: GraphMessage[],
       messageId: string,
       attachment: GraphAttachment,
-      options?: { force?: boolean; cachedWorkOrder?: StoredWorkOrder }
+      options?: { force?: boolean }
     ) => {
       const key = `${messageId}:${attachment.id}`;
       const force = options?.force === true;
-
-      if (options?.cachedWorkOrder && !force) {
-        const relatedChannelNotes = collectChannelNotesForWorkOrder(
-          channelMessages,
-          messageId,
-          options.cachedWorkOrder
-        );
-        setProcessedWorkOrders((current) => ({
-          ...current,
-          [key]: {
-            workOrder: {
-              ...options.cachedWorkOrder!,
-              notes: mergeWorkOrderNotes(
-                options.cachedWorkOrder!.notes,
-                relatedChannelNotes
-              ),
-              teamsTeamId: teamId,
-              teamsChannelId: channelId,
-              teamsMessageId: messageId,
-              teamsAttachmentId: attachment.id,
-            },
-            workOrderId: options.cachedWorkOrder!.id,
-            cached: true,
-            status: 'saved',
-            error: undefined,
-          },
-        }));
-        return { cached: true as const, workOrderId: options.cachedWorkOrder.id };
-      }
 
       setProcessedWorkOrders((current) => ({
         ...current,
@@ -497,30 +468,16 @@ function TeamsGraphTestApp() {
         } from Firebase / AI…`
       );
 
-      let cachedRecords: StoredWorkOrder[] = [];
-      try {
-        cachedRecords = await listWorkOrders(await acquireToken(), channelId);
-      } catch {
-        cachedRecords = [];
-      }
-      const cachedByAttachment = new Map(
-        cachedRecords
-          .filter((item) => item.teamsMessageId && item.teamsAttachmentId)
-          .map((item) => [`${item.teamsMessageId}:${item.teamsAttachmentId}`, item])
-      );
-
       let importedCount = 0;
       let cachedCount = 0;
       for (const item of pdfAttachments) {
         if (generation !== channelImportGenerationRef.current) return;
-        const key = `${item.message.id}:${item.attachment.id}`;
         const result = await importPdfAttachment(
           teamId,
           channelId,
           channelMessages,
           item.message.id,
-          item.attachment,
-          { cachedWorkOrder: cachedByAttachment.get(key) }
+          item.attachment
         );
         if (!result) continue;
         if (result.cached) cachedCount += 1;
