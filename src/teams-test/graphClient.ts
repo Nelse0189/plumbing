@@ -7,7 +7,10 @@ async function graphFetch<T>(path: string): Promise<T> {
 
 async function graphRequest(path: string): Promise<Response> {
   const token = await acquireToken();
-  const response = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
+  const url = path.startsWith('https://')
+    ? path
+    : `https://graph.microsoft.com/v1.0${path}`;
+  const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -74,6 +77,7 @@ interface ChannelFilesFolder {
 
 interface ListResponse<T> {
   value: T[];
+  '@odata.nextLink'?: string;
 }
 
 export function getJoinedTeams() {
@@ -86,28 +90,69 @@ export function getTeamChannels(teamId: string) {
   );
 }
 
+async function addRepliesToMessages(
+  teamId: string,
+  channelId: string,
+  posts: GraphMessage[]
+) {
+  // Channel posts and their replies are separate Graph resources. Fetch the
+  // thread for each post so the UI and work-order notes match what Teams shows.
+  const messages: GraphMessage[] = [];
+  // Keep this deliberately sequential to avoid Graph throttling on busy channels.
+  for (const message of posts) {
+    try {
+      const replies = await graphFetch<ListResponse<GraphMessage>>(
+        `/teams/${teamId}/channels/${channelId}/messages/${message.id}/replies?$top=50`
+      );
+      messages.push({ ...message, replies: replies.value });
+    } catch {
+      // A missing/denied reply thread should not hide the channel post.
+      messages.push({ ...message, replies: [] });
+    }
+  }
+  return messages;
+}
+
 export async function getChannelMessages(teamId: string, channelId: string) {
   const response = await graphFetch<ListResponse<GraphMessage>>(
     `/teams/${teamId}/channels/${channelId}/messages?$top=25`
   );
+  return { value: await addRepliesToMessages(teamId, channelId, response.value) };
+}
 
-  // Channel posts and their replies are separate Graph resources. Fetch the
-  // thread for each post so the UI and work-order notes match what Teams shows.
-  const messages = await Promise.all(
-    response.value.map(async (message) => {
-      try {
-        const replies = await graphFetch<ListResponse<GraphMessage>>(
-          `/teams/${teamId}/channels/${channelId}/messages/${message.id}/replies?$top=50`
-        );
-        return { ...message, replies: replies.value };
-      } catch {
-        // A missing/denied reply thread should not hide the channel post.
-        return { ...message, replies: [] };
+/** Loads posts created in the specified trailing window, up to 500 posts. */
+export async function getChannelMessagesSince(
+  teamId: string,
+  channelId: string,
+  since: Date
+) {
+  let nextPage:
+    | string
+    | undefined = `/teams/${teamId}/channels/${channelId}/messages?$top=50`;
+  const posts: GraphMessage[] = [];
+  const seen = new Set<string>();
+  const cutoff = since.getTime();
+  let pagesRead = 0;
+
+  while (nextPage && pagesRead < 10) {
+    const page: ListResponse<GraphMessage> = await graphFetch<
+      ListResponse<GraphMessage>
+    >(nextPage);
+    pagesRead += 1;
+    for (const message of page.value) {
+      const createdAt = new Date(message.createdDateTime).getTime();
+      if (Number.isFinite(createdAt) && createdAt >= cutoff && !seen.has(message.id)) {
+        seen.add(message.id);
+        posts.push(message);
       }
-    })
-  );
+    }
+    nextPage = page['@odata.nextLink'];
+  }
 
-  return { value: messages };
+  return {
+    value: await addRepliesToMessages(teamId, channelId, posts),
+    reachedPageLimit: Boolean(nextPage),
+  };
 }
 
 function getDriveRelativePath(contentUrl: string) {

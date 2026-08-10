@@ -18,6 +18,7 @@ import {
 import {
   downloadChannelAttachment,
   getChannelMessages,
+  getChannelMessagesSince,
   getJoinedTeams,
   getMe,
   getTeamChannels,
@@ -193,6 +194,7 @@ function TeamsGraphTestApp() {
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
   const [channelImportStatus, setChannelImportStatus] = useState<string | null>(null);
+  const [weeklyImportLoading, setWeeklyImportLoading] = useState(false);
   const [schedulingWorkOrderId, setSchedulingWorkOrderId] = useState<string | null>(
     null
   );
@@ -554,6 +556,42 @@ function TeamsGraphTestApp() {
     }
   };
 
+  const handleImportLastSevenDays = async () => {
+    if (!selectedTeamId || !selectedChannelId || weeklyImportLoading) return;
+
+    setWeeklyImportLoading(true);
+    setError(null);
+    setChannelImportStatus('Loading the last 7 days of channel posts…');
+    clearPdfCache();
+    setProcessedWorkOrders({});
+    channelImportGenerationRef.current += 1;
+
+    try {
+      const since = new Date();
+      since.setDate(since.getDate() - 7);
+      const response = await getChannelMessagesSince(
+        selectedTeamId,
+        selectedChannelId,
+        since
+      );
+      setMessages(response.value);
+      await autoImportChannelPdfs(
+        selectedTeamId,
+        selectedChannelId,
+        response.value
+      );
+      if (response.reachedPageLimit) {
+        setChannelImportStatus(
+          'Imported the first 500 posts from the last 7 days. Narrow the date range if older posts are still missing.'
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWeeklyImportLoading(false);
+    }
+  };
+
   const loadPdfAttachment = async (
     messageId: string,
     attachment: GraphAttachment,
@@ -853,21 +891,33 @@ function TeamsGraphTestApp() {
                   ? ` — ${selectedTeamName} / ${selectedChannelName}`
                   : ''}
               </h2>
-              {messages.length > 0 && (
-                <label className="teams-test__sort">
-                  Sort
-                  <select
-                    value={messageSort}
-                    onChange={(event) =>
-                      setMessageSort(event.target.value as MessageSort)
-                    }
+              {selectedChannelId && (
+                <div className="teams-test__message-tools">
+                  <label className="teams-test__sort">
+                    Sort
+                    <select
+                      value={messageSort}
+                      onChange={(event) =>
+                        setMessageSort(event.target.value as MessageSort)
+                      }
+                    >
+                      <option value="newest">Newest first</option>
+                      <option value="oldest">Oldest first</option>
+                      <option value="sender">Sender A–Z</option>
+                      <option value="has-pdf">PDFs first</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className="teams-test__weekly-import"
+                    disabled={weeklyImportLoading || !selectedChannelId}
+                    onClick={() => void handleImportLastSevenDays()}
                   >
-                    <option value="newest">Newest first</option>
-                    <option value="oldest">Oldest first</option>
-                    <option value="sender">Sender A–Z</option>
-                    <option value="has-pdf">PDFs first</option>
-                  </select>
-                </label>
+                    {weeklyImportLoading
+                      ? 'Importing last 7 days…'
+                      : 'Import last 7 days'}
+                  </button>
+                </div>
               )}
             </div>
             {channelImportStatus && (
