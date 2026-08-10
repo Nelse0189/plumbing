@@ -513,19 +513,19 @@ function TeamsGraphTestApp() {
     }
   };
 
-  const handleImportLastSevenDays = async () => {
+  const handleImportLastTwoWeeks = async () => {
     if (!selectedTeamId || !selectedChannelId || weeklyImportLoading) return;
 
     setWeeklyImportLoading(true);
     setError(null);
-    setChannelImportStatus('Loading the last 7 days of channel posts…');
+    setChannelImportStatus('Loading the last 14 days of channel posts…');
     clearPdfCache();
     setProcessedWorkOrders({});
     channelImportGenerationRef.current += 1;
 
     try {
       const since = new Date();
-      since.setDate(since.getDate() - 7);
+      since.setDate(since.getDate() - 14);
       const response = await getChannelMessagesSince(
         selectedTeamId,
         selectedChannelId,
@@ -539,7 +539,7 @@ function TeamsGraphTestApp() {
       );
       if (response.reachedPageLimit) {
         setChannelImportStatus(
-          'Imported the first 500 posts from the last 7 days. Narrow the date range if older posts are still missing.'
+          'Imported the first 500 posts from the last 14 days. Narrow the date range if older posts are still missing.'
         );
       }
     } catch (err) {
@@ -868,11 +868,11 @@ function TeamsGraphTestApp() {
                     type="button"
                     className="teams-test__weekly-import"
                     disabled={weeklyImportLoading || !selectedChannelId}
-                    onClick={() => void handleImportLastSevenDays()}
+                    onClick={() => void handleImportLastTwoWeeks()}
                   >
                     {weeklyImportLoading
-                      ? 'Importing last 7 days…'
-                      : 'Import last 7 days'}
+                      ? 'Importing last 14 days…'
+                      : 'Import last 14 days'}
                   </button>
                 </div>
               )}

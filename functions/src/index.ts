@@ -313,7 +313,7 @@ export const extractWorkOrder = onCall(
               "- workOrderNumber: document/work-order/job number if present",
               "- notes: short plumber-facing summary of installation details, access notes, equipment, or special instructions from the PDF, plus any relevant Teams channel notes. Do not paste the raw PDF. Keep it concise.",
               "- confidence: 0 to 1 for how complete and certain the extraction is",
-              "If <channel-note> is present, treat it as dispatcher/plumber commentary for this job and fold useful details into notes (and into date/time/phone/address only when clearly stated there).",
+              "Read scheduling information wherever it appears: labeled Notes, Comments, Special Instructions, Requested Date/Time, and Teams post/reply text. If those notes clearly state a requested, booked, or rescheduled date/time, use it for appointmentDate/appointmentTime and include the context in notes.",
             ].join(" "),
           },
           {
@@ -557,7 +557,7 @@ export const importChannelPdfWorkOrder = onCall(
               "- workOrderNumber: document/work-order/job number if present",
               "- notes: short plumber-facing summary of installation details, access notes, equipment, or special instructions from the PDF, plus any relevant Teams channel notes. Do not paste the raw PDF. Keep it concise.",
               "- confidence: 0 to 1 for how complete and certain the extraction is",
-              "If <channel-note> is present, it contains the Teams post plus replies for this job. Treat a clearly stated requested, booked, or rescheduled date/time in the replies as the scheduling source of truth and extract it into appointmentDate/appointmentTime. Also fold useful thread details into notes.",
+              "Read scheduling information wherever it appears: labeled Notes, Comments, Special Instructions, Requested Date/Time, and Teams post/reply text. <channel-note> contains the Teams post plus replies for this job. Treat a clearly stated requested, booked, or rescheduled date/time in those notes/replies as the scheduling source of truth and extract it into appointmentDate/appointmentTime. Also fold useful thread details into notes.",
             ].join(" "),
           },
           {
