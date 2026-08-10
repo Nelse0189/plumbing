@@ -1,4 +1,4 @@
-import { StrictMode, useCallback, useEffect, useState } from 'react';
+import { StrictMode, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   acquireToken,
@@ -34,6 +34,8 @@ import './teams-test.css';
 interface PdfResult {
   loading?: boolean;
   text?: string;
+  previewUrl?: string;
+  showPreview?: boolean;
   error?: string;
 }
 
@@ -60,6 +62,8 @@ function TeamsGraphTestApp() {
   const [channels, setChannels] = useState<GraphChannel[]>([]);
   const [messages, setMessages] = useState<GraphMessage[]>([]);
   const [pdfResults, setPdfResults] = useState<Record<string, PdfResult>>({});
+  const pdfDataRef = useRef<Record<string, ArrayBuffer>>({});
+  const pdfUrlsRef = useRef<Record<string, string>>({});
   const [processingKeys, setProcessingKeys] = useState<Record<string, boolean>>({});
   const [processedWorkOrders, setProcessedWorkOrders] = useState<
     Record<string, ProcessedWorkOrder>
@@ -137,6 +141,23 @@ function TeamsGraphTestApp() {
     return () => window.clearInterval(timer);
   }, [refreshWorkOrders, signedIn]);
 
+  const clearPdfCache = useCallback(() => {
+    for (const url of Object.values(pdfUrlsRef.current)) {
+      URL.revokeObjectURL(url);
+    }
+    pdfUrlsRef.current = {};
+    pdfDataRef.current = {};
+    setPdfResults({});
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      for (const url of Object.values(pdfUrlsRef.current)) {
+        URL.revokeObjectURL(url);
+      }
+    };
+  }, []);
+
   const handleSelectTeam = async (team: GraphTeam) => {
     setError(null);
     setSelectedTeamId(team.id);
@@ -144,6 +165,7 @@ function TeamsGraphTestApp() {
     setSelectedChannelId(null);
     setSelectedChannelName('');
     setMessages([]);
+    clearPdfCache();
 
     try {
       const response = await getTeamChannels(team.id);
@@ -159,6 +181,7 @@ function TeamsGraphTestApp() {
     setSelectedChannelId(channel.id);
     setSelectedChannelName(channel.displayName);
     setMessages([]);
+    clearPdfCache();
 
     try {
       const response = await getChannelMessages(selectedTeamId, channel.id);
@@ -168,43 +191,99 @@ function TeamsGraphTestApp() {
     }
   };
 
-  const readPdfText = async (
+  const loadPdfAttachment = async (
     messageId: string,
-    attachment: GraphAttachment
-  ): Promise<string> => {
+    attachment: GraphAttachment,
+    options?: { extractText?: boolean; showPreview?: boolean }
+  ): Promise<{ data: ArrayBuffer; previewUrl: string; text?: string }> => {
     if (!selectedTeamId || !selectedChannelId) {
       throw new Error('Select a team and channel first.');
     }
 
     const key = `${messageId}:${attachment.id}`;
+    const extractText = options?.extractText === true;
+    const showPreview = options?.showPreview !== false;
+
     setPdfResults((current) => ({
       ...current,
-      [key]: { ...current[key], loading: true, error: undefined },
+      [key]: {
+        ...current[key],
+        loading: true,
+        error: undefined,
+        showPreview: showPreview || current[key]?.showPreview,
+      },
     }));
 
     try {
-      const data = await downloadChannelAttachment(
-        selectedTeamId,
-        selectedChannelId,
-        attachment
-      );
-      const text = await extractPdfText(data);
-      const readableText = text || 'No readable text was found in this PDF.';
+      let data = pdfDataRef.current[key];
+      let previewUrl = pdfUrlsRef.current[key];
+
+      if (!data || !previewUrl) {
+        data = await downloadChannelAttachment(
+          selectedTeamId,
+          selectedChannelId,
+          attachment
+        );
+        // Clone so pdf.js and the blob URL do not share the same detached buffer.
+        const bytes = data.slice(0);
+        pdfDataRef.current[key] = bytes;
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        previewUrl = URL.createObjectURL(
+          new Blob([bytes], { type: 'application/pdf' })
+        );
+        pdfUrlsRef.current[key] = previewUrl;
+        data = bytes;
+      }
+
+      let text = pdfResults[key]?.text;
+      if (extractText) {
+        const extracted = await extractPdfText(data.slice(0));
+        text = extracted || 'No readable text was found in this PDF.';
+      }
+
       setPdfResults((current) => ({
         ...current,
-        [key]: { text: readableText },
+        [key]: {
+          ...current[key],
+          loading: false,
+          previewUrl,
+          showPreview: showPreview || current[key]?.showPreview,
+          text: text ?? current[key]?.text,
+          error: undefined,
+        },
       }));
-      return readableText;
+
+      return { data, previewUrl, text };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setPdfResults((current) => ({
         ...current,
         [key]: {
+          ...current[key],
+          loading: false,
           error: message,
         },
       }));
       throw new Error(message);
     }
+  };
+
+  const readPdfText = async (
+    messageId: string,
+    attachment: GraphAttachment
+  ): Promise<string> => {
+    const result = await loadPdfAttachment(messageId, attachment, {
+      extractText: true,
+      showPreview: true,
+    });
+    return result.text || 'No readable text was found in this PDF.';
+  };
+
+  const viewPdf = async (messageId: string, attachment: GraphAttachment) => {
+    await loadPdfAttachment(messageId, attachment, {
+      extractText: false,
+      showPreview: true,
+    });
   };
 
   const handleProcessWorkOrder = async (
@@ -457,6 +536,21 @@ function TeamsGraphTestApp() {
                                   type="button"
                                   disabled={result?.loading}
                                   onClick={() => {
+                                    void viewPdf(message.id, attachment).catch(
+                                      () => undefined
+                                    );
+                                  }}
+                                >
+                                  {result?.loading && !result?.previewUrl
+                                    ? 'Loading…'
+                                    : result?.showPreview && result?.previewUrl
+                                      ? 'Reload PDF'
+                                      : 'View PDF'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={result?.loading}
+                                  onClick={() => {
                                     void readPdfText(message.id, attachment).catch(
                                       () => undefined
                                     );
@@ -466,7 +560,7 @@ function TeamsGraphTestApp() {
                                     ? 'Reading…'
                                     : result?.text
                                       ? 'Read again'
-                                      : 'Read PDF'}
+                                      : 'Read text'}
                                 </button>
                                 <button
                                   type="button"
@@ -487,22 +581,43 @@ function TeamsGraphTestApp() {
                                 </button>
                               </div>
                             </div>
-                            {attachment.contentUrl && (
-                              <a
-                                href={attachment.contentUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                Open in Teams / SharePoint
-                              </a>
-                            )}
+                            <div className="teams-test__attachment-links">
+                              {result?.previewUrl && (
+                                <a
+                                  href={result.previewUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  Open PDF in new tab
+                                </a>
+                              )}
+                              {attachment.contentUrl && (
+                                <a
+                                  href={attachment.contentUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  Open in Teams / SharePoint
+                                </a>
+                              )}
+                            </div>
                             {result?.error && (
                               <p className="teams-test__attachment-error">
                                 {result.error}
                               </p>
                             )}
+                            {result?.showPreview && result.previewUrl && (
+                              <iframe
+                                className="teams-test__pdf-viewer"
+                                title={attachment.name ?? 'PDF preview'}
+                                src={result.previewUrl}
+                              />
+                            )}
                             {result?.text && (
-                              <pre className="teams-test__pdf-text">{result.text}</pre>
+                              <details className="teams-test__pdf-text-details">
+                                <summary>Extracted text</summary>
+                                <pre className="teams-test__pdf-text">{result.text}</pre>
+                              </details>
                             )}
                           </div>
                         );

@@ -189,6 +189,13 @@
   flex-wrap: wrap;
 }
 
+.teams-test__attachment-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.35rem;
+}
+
 .teams-test__attachment a {
   color: var(--success);
   font-size: 0.8rem;
@@ -199,10 +206,31 @@
   color: var(--error);
 }
 
+.teams-test__pdf-viewer {
+  display: block;
+  width: 100%;
+  min-height: 480px;
+  height: min(70vh, 720px);
+  margin-top: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #111;
+}
+
+.teams-test__pdf-text-details {
+  margin-top: 0.75rem;
+}
+
+.teams-test__pdf-text-details summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
 .teams-test__pdf-text {
   max-height: 320px;
   overflow: auto;
-  margin-top: 0.75rem;
+  margin-top: 0.5rem;
   padding: 0.75rem;
   border: 1px solid var(--border);
   color: var(--text-primary);
