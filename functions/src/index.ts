@@ -1258,6 +1258,50 @@ export const handleVoiceWindowCall = onRequest(
       ? (confirmationDoc.data() as VoiceConfirmationRecord)
       : null;
     const response = new twilio.twiml.VoiceResponse();
+    const promptUrl = `https://us-central1-nj-plumbing.cloudfunctions.net/handleVoiceWindowPrompt?confirmationId=${encodeURIComponent(
+      confirmationId
+    )}`;
+
+    if (!confirmation) {
+      response.say("This confirmation is no longer available. Goodbye.");
+      response.hangup();
+    } else {
+      // Give the callee time to pick up and put the phone to their ear.
+      response.say("Hello.");
+      const gather = response.gather({
+        input: ["dtmf", "speech"],
+        timeout: 10,
+        speechTimeout: "auto",
+        action: promptUrl,
+        method: "POST",
+      });
+      gather.say(
+        "When you are ready, please say hello or press any key."
+      );
+      // Continue even if they do not respond, after the wait above.
+      response.redirect(promptUrl);
+    }
+    res.type("text/xml").status(200).send(response.toString());
+  }
+);
+
+export const handleVoiceWindowPrompt = onRequest(
+  {
+    invoker: "public",
+    cors: false,
+  },
+  async (req, res) => {
+    const confirmationId = asTrimmedString(req.query.confirmationId);
+    const confirmationDoc = confirmationId
+      ? await admin.firestore().collection("voiceConfirmations").doc(confirmationId).get()
+      : null;
+    const confirmation = confirmationDoc?.exists
+      ? (confirmationDoc.data() as VoiceConfirmationRecord)
+      : null;
+    const response = new twilio.twiml.VoiceResponse();
+    const answerUrl = `https://us-central1-nj-plumbing.cloudfunctions.net/handleVoiceWindowResponse?confirmationId=${encodeURIComponent(
+      confirmationId
+    )}`;
 
     if (!confirmation) {
       response.say("This confirmation is no longer available. Goodbye.");
@@ -1266,23 +1310,18 @@ export const handleVoiceWindowCall = onRequest(
       const gather = response.gather({
         input: ["dtmf", "speech"],
         numDigits: 1,
-        timeout: 7,
-        action: `https://us-central1-nj-plumbing.cloudfunctions.net/handleVoiceWindowResponse?confirmationId=${encodeURIComponent(
-          confirmationId
-        )}`,
+        timeout: 10,
+        speechTimeout: "auto",
+        action: answerUrl,
         method: "POST",
       });
       gather.say(
-        `This is a test call from ${strCompanyName.value()}. ` +
+        `Thank you. This is a test call from ${strCompanyName.value()}. ` +
           `For ${confirmation.customerName || "the customer"}, the arrival window is ` +
           `${confirmation.appointmentWindow}. ` +
           "Press 1 or say yes if this works. Press 2 or say no if it does not work."
       );
-      response.redirect(
-        `https://us-central1-nj-plumbing.cloudfunctions.net/handleVoiceWindowResponse?confirmationId=${encodeURIComponent(
-          confirmationId
-        )}&noResponse=1`
-      );
+      response.redirect(`${answerUrl}&noResponse=1`);
     }
     res.type("text/xml").status(200).send(response.toString());
   }
