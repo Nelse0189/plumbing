@@ -638,6 +638,16 @@ function TeamsGraphTestApp() {
     });
   };
 
+  const viewExtractedText = async (
+    messageId: string,
+    attachment: GraphAttachment
+  ) => {
+    await loadPdfAttachment(messageId, attachment, {
+      extractText: true,
+      showPreview: false,
+    });
+  };
+
   const handleSaveWorkOrder = async (key: string) => {
     const processed = processedWorkOrders[key];
     if (!processed) return;
@@ -951,6 +961,22 @@ function TeamsGraphTestApp() {
                                 </button>
                                 <button
                                   type="button"
+                                  disabled={result?.loading}
+                                  onClick={() => {
+                                    void viewExtractedText(
+                                      message.id,
+                                      attachment
+                                    ).catch(() => undefined);
+                                  }}
+                                >
+                                  {result?.loading
+                                    ? 'Reading…'
+                                    : result?.text
+                                      ? 'Show extracted text'
+                                      : 'View extracted text'}
+                                </button>
+                                <button
+                                  type="button"
                                   disabled={
                                     result?.loading ||
                                     processed?.status === 'importing'
@@ -999,8 +1025,11 @@ function TeamsGraphTestApp() {
                               />
                             )}
                             {result?.text && (
-                              <details className="teams-test__pdf-text-details">
-                                <summary>Extracted text</summary>
+                              <details
+                                className="teams-test__pdf-text-details"
+                                open
+                              >
+                                <summary>Extracted PDF text</summary>
                                 <pre className="teams-test__pdf-text">{result.text}</pre>
                               </details>
                             )}
