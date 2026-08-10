@@ -404,7 +404,7 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
           <p>
             Depot: {plan.originAddress || DEFAULT_DISPATCH_ORIGIN}. Default windows: 1st 8–12,
             2nd 10–2, 3rd 12–4 (editable). Morning texts and temporary voice confirmations
-            still go to the test number.
+            still go to the test number. On voice calls: 1/yes, 2/no, or 9/repeat.
           </p>
         </div>
         <div className="dispatch-board__actions">
