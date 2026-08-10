@@ -17,7 +17,7 @@ export interface WorkOrderImportProgress {
   id: string;
   channelId: string;
   channelName: string;
-  status: 'processing' | 'completed' | 'failed';
+  status: 'queued' | 'processing' | 'completed' | 'failed';
   total: number;
   processed: number;
   imported: number;
@@ -37,7 +37,9 @@ function serializeProgress(
     channelId: typeof data.channelId === 'string' ? data.channelId : '',
     channelName: typeof data.channelName === 'string' ? data.channelName : 'Teams channel',
     status:
-      data.status === 'completed' || data.status === 'failed'
+      data.status === 'queued' ||
+      data.status === 'completed' ||
+      data.status === 'failed'
         ? data.status
         : 'processing',
     total: typeof data.total === 'number' ? data.total : 0,

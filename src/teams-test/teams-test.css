@@ -157,6 +157,28 @@
   font-size: 0.78rem;
 }
 
+.teams-test__import-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.65rem;
+  align-items: baseline;
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: rgba(216, 178, 79, 0.1);
+  font-size: 0.8rem;
+}
+
+.teams-test__import-progress strong {
+  color: var(--accent);
+}
+
+.teams-test__import-progress small {
+  flex-basis: 100%;
+  color: var(--text-secondary);
+}
+
 .teams-test__panel ul,
 .teams-test__message-list {
   list-style: none;

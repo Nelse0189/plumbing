@@ -694,7 +694,9 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
       {importProgress && (
         <div className="dispatch-board__import-progress">
           <strong>
-            {importProgress.status === 'processing'
+            {importProgress.status === 'queued'
+              ? 'Teams import queued'
+              : importProgress.status === 'processing'
               ? 'Teams import in progress'
               : importProgress.status === 'failed'
                 ? 'Teams import needs attention'

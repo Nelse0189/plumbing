@@ -35,6 +35,10 @@ import {
   saveWorkOrder,
   startTeamsChannelImport,
 } from '../services/workOrderService';
+import {
+  subscribeLatestWorkOrderImportProgress,
+  type WorkOrderImportProgress,
+} from '../services/importProgressService';
 import type { StoredWorkOrder, WorkOrder } from '../types';
 import '../index.css';
 import './teams-test.css';
@@ -195,6 +199,8 @@ function TeamsGraphTestApp() {
   const [queueError, setQueueError] = useState<string | null>(null);
   const [channelImportStatus, setChannelImportStatus] = useState<string | null>(null);
   const [weeklyImportLoading, setWeeklyImportLoading] = useState(false);
+  const [importProgress, setImportProgress] =
+    useState<WorkOrderImportProgress | null>(null);
   const [schedulingWorkOrderId, setSchedulingWorkOrderId] = useState<string | null>(
     null
   );
@@ -276,6 +282,17 @@ function TeamsGraphTestApp() {
     }, 10000);
     return () => window.clearInterval(timer);
   }, [refreshWorkOrders, signedIn]);
+
+  useEffect(() => {
+    if (!signedIn) {
+      setImportProgress(null);
+      return;
+    }
+    return subscribeLatestWorkOrderImportProgress(
+      setImportProgress,
+      (err) => console.warn('Could not load Teams import progress:', err)
+    );
+  }, [signedIn]);
 
   const clearPdfCache = useCallback(() => {
     for (const url of Object.values(pdfUrlsRef.current)) {
@@ -813,6 +830,29 @@ function TeamsGraphTestApp() {
             {channelImportStatus && (
               <p className="teams-test__hint">{channelImportStatus}</p>
             )}
+            {importProgress &&
+              (!selectedChannelId ||
+                importProgress.channelId === selectedChannelId) && (
+                <div className="teams-test__import-progress">
+                  <strong>
+                    {importProgress.status === 'queued'
+                      ? 'Background import queued'
+                      : importProgress.status === 'processing'
+                        ? 'Background import in progress'
+                        : importProgress.status === 'failed'
+                          ? 'Background import needs attention'
+                          : 'Latest background import'}
+                  </strong>
+                  <span>
+                    {importProgress.processed}/{importProgress.total} PDFs processed ·{' '}
+                    {importProgress.imported} imported · {importProgress.cached} cached
+                    {importProgress.failed
+                      ? ` · ${importProgress.failed} failed`
+                      : ''}
+                  </span>
+                  {importProgress.message && <small>{importProgress.message}</small>}
+                </div>
+              )}
 
             {messages.length === 0 ? (
               <p className="teams-test__hint">
