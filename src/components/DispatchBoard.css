@@ -241,20 +241,34 @@
   font-size: 0.7rem;
 }
 
+.dispatch-node__close,
 .dispatch-node__delete {
   padding: 0.15rem 0.4rem;
   font-size: 0.65rem;
   line-height: 1.2;
-  border-color: var(--error);
-  color: #ffb4b4;
   background: transparent;
   cursor: pointer;
+}
+
+.dispatch-node__close {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.dispatch-node__close:hover:not(:disabled) {
+  background: rgba(126, 170, 146, 0.15);
+}
+
+.dispatch-node__delete {
+  border-color: var(--error);
+  color: #ffb4b4;
 }
 
 .dispatch-node__delete:hover:not(:disabled) {
   background: rgba(202, 71, 84, 0.15);
 }
 
+.dispatch-node__close:disabled,
 .dispatch-node__delete:disabled {
   opacity: 0.6;
   cursor: wait;

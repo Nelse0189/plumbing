@@ -48,7 +48,7 @@ export interface WorkOrder {
 
 export interface StoredWorkOrder extends WorkOrder {
   id: string;
-  status: 'needs_review' | 'unscheduled' | 'scheduling' | 'scheduled';
+  status: 'needs_review' | 'unscheduled' | 'scheduling' | 'scheduled' | 'closed';
   selectedTime?: string;
   cached?: boolean;
 }

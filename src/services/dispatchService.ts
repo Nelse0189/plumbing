@@ -7,6 +7,7 @@ import {
   query,
   setDoc,
   Timestamp,
+  updateDoc,
   where,
   deleteDoc,
   type Unsubscribe,
@@ -132,6 +133,7 @@ export function mergeWorkOrdersIntoPlan(
     stops.filter((stop) => {
       const live = workOrders.find((order) => order.id === stop.workOrderId);
       if (!live) return true;
+      if (live.status === 'closed') return false;
       const hasNotes = workOrderHasNotes(live.notes);
       stop.notes = live.notes || '';
       if (ready && !hasNotes) {
@@ -149,6 +151,7 @@ export function mergeWorkOrdersIntoPlan(
   next.notReady = refreshLane(next.notReady, false);
 
   for (const workOrder of workOrders) {
+    if (workOrder.status === 'closed') continue;
     if (assigned.has(workOrder.id)) continue;
     const stop = toDispatchStop(workOrder);
     if (workOrderHasNotes(workOrder.notes)) {
@@ -577,6 +580,42 @@ export async function deleteDispatchJob(
     }),
   };
 
+  await saveDispatchPlan(next);
+  return next;
+}
+
+/**
+ * Closes a job without deleting it. The stop leaves dispatch while the work
+ * order remains in Firestore as operational history.
+ */
+export async function closeDispatchJob(
+  plan: DispatchPlan,
+  stopId: string
+): Promise<DispatchPlan> {
+  const stop =
+    plan.unassigned.find((item) => item.id === stopId) ||
+    plan.notReady.find((item) => item.id === stopId) ||
+    null;
+
+  if (!stop) {
+    throw new Error('Only Ready / Unassigned or Not Ready jobs can be closed here.');
+  }
+
+  const workOrderRef = doc(db, WORK_ORDERS_COLLECTION, stop.workOrderId || stopId);
+  const workOrderSnap = await getDoc(workOrderRef);
+  if (workOrderSnap.exists()) {
+    await updateDoc(workOrderRef, {
+      status: 'closed',
+      closedAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+  }
+
+  const next: DispatchPlan = {
+    ...plan,
+    unassigned: plan.unassigned.filter((item) => item.id !== stopId),
+    notReady: plan.notReady.filter((item) => item.id !== stopId),
+  };
   await saveDispatchPlan(next);
   return next;
 }

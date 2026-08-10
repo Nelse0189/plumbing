@@ -4,6 +4,7 @@ import {
   autoOrderAllUnsetTrucks,
   autoOrderTruckStops,
   cancelMorningTextsForTruck,
+  closeDispatchJob,
   createMockDispatchJob,
   deleteDispatchJob,
   queueMorningTextsForTruck,
@@ -77,7 +78,9 @@ function StopNode({
   onPriorityChange,
   onWindowChange,
   onCallConfirmation,
+  onClose,
   onDelete,
+  closing,
   deleting,
   calling,
   dragPayload,
@@ -87,7 +90,9 @@ function StopNode({
   onPriorityChange?: (priority: number) => void;
   onWindowChange?: (start: string, end: string) => void;
   onCallConfirmation?: () => void;
+  onClose?: () => void;
   onDelete?: () => void;
+  closing?: boolean;
   deleting?: boolean;
   calling?: boolean;
   dragPayload: DragPayload;
@@ -109,6 +114,23 @@ function StopNode({
         <span className="dispatch-node__header-actions">
           {stop.distanceMiles != null && (
             <span className="dispatch-node__miles">{stop.distanceMiles} mi</span>
+          )}
+          {onClose && (
+            <button
+              type="button"
+              className="dispatch-node__close"
+              disabled={closing}
+              title="Close job and retain its history"
+              aria-label={`Close job ${stop.workOrderNumber || stop.customerName || stop.id}`}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onClose();
+              }}
+            >
+              {closing ? '…' : 'Close'}
+            </button>
           )}
           {onDelete && (
             <button
@@ -269,6 +291,7 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [callingStopId, setCallingStopId] = useState<string | null>(null);
+  const [closingStopId, setClosingStopId] = useState<string | null>(null);
   const [deletingStopId, setDeletingStopId] = useState<string | null>(null);
   const [boardEpoch, setBoardEpoch] = useState(0);
 
@@ -509,6 +532,27 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
     }
   };
 
+  const handleCloseJob = async (stop: DispatchStop) => {
+    if (!plan) return;
+    const label = stop.workOrderNumber || stop.customerName || 'this job';
+    const confirmed = window.confirm(
+      `Close ${label}? It will leave dispatch but remain saved in Firebase history.`
+    );
+    if (!confirmed) return;
+
+    setClosingStopId(stop.id);
+    setError(null);
+    try {
+      const next = await closeDispatchJob(plan, stop.id);
+      setPlan(next);
+      setStatus(`Closed ${label}. It remains in work-order history.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setClosingStopId(null);
+    }
+  };
+
   const handleVoiceConfirmation = async (truck: DispatchTruck, stop: DispatchStop) => {
     if (!plan) return;
     setCallingStopId(stop.id);
@@ -683,6 +727,8 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
                 await persist(next);
               }}
               dragPayload={{ from: 'unassigned', stopId: stop.id }}
+              onClose={() => void handleCloseJob(stop)}
+              closing={closingStopId === stop.id}
               onDelete={() => void handleDeleteJob(stop)}
               deleting={deletingStopId === stop.id}
             />
