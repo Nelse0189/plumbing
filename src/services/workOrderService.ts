@@ -36,6 +36,21 @@ export interface ChannelPdfImportResult {
   workOrder: StoredWorkOrder;
 }
 
+export async function startTeamsChannelImport(input: {
+  teamId: string;
+  channelId: string;
+  channelName: string;
+  days: number;
+  microsoftAccessToken: string;
+}): Promise<{ runId: string; status: 'queued' }> {
+  const callable = httpsCallable<typeof input, { runId: string; status: 'queued' }>(
+    functions,
+    'startTeamsChannelImport'
+  );
+  const result = await callable(input);
+  return result.data;
+}
+
 export async function importChannelPdfWorkOrder(input: {
   text: string;
   channelNote?: string;
