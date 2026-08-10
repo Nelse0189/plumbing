@@ -36,6 +36,7 @@ import {
   startTeamsChannelImport,
 } from '../services/workOrderService';
 import {
+  cancelWorkOrderImport,
   subscribeLatestWorkOrderImportProgress,
   type WorkOrderImportProgress,
 } from '../services/importProgressService';
@@ -199,6 +200,7 @@ function TeamsGraphTestApp() {
   const [queueError, setQueueError] = useState<string | null>(null);
   const [channelImportStatus, setChannelImportStatus] = useState<string | null>(null);
   const [weeklyImportLoading, setWeeklyImportLoading] = useState(false);
+  const [cancelingImport, setCancelingImport] = useState(false);
   const [importProgress, setImportProgress] =
     useState<WorkOrderImportProgress | null>(null);
   const [schedulingWorkOrderId, setSchedulingWorkOrderId] = useState<string | null>(
@@ -841,6 +843,8 @@ function TeamsGraphTestApp() {
                         ? 'Background import in progress'
                         : importProgress.status === 'failed'
                           ? 'Background import needs attention'
+                          : importProgress.status === 'canceled'
+                            ? 'Background import canceled'
                           : 'Latest background import'}
                   </strong>
                   <span>
@@ -851,6 +855,25 @@ function TeamsGraphTestApp() {
                       : ''}
                   </span>
                   {importProgress.message && <small>{importProgress.message}</small>}
+                  {(importProgress.status === 'queued' ||
+                    importProgress.status === 'processing') && (
+                    <button
+                      type="button"
+                      disabled={cancelingImport}
+                      onClick={async () => {
+                        setCancelingImport(true);
+                        try {
+                          await cancelWorkOrderImport(importProgress.id);
+                        } catch (err) {
+                          setError(err instanceof Error ? err.message : String(err));
+                        } finally {
+                          setCancelingImport(false);
+                        }
+                      }}
+                    >
+                      {cancelingImport ? 'Canceling…' : 'Cancel import'}
+                    </button>
+                  )}
                 </div>
               )}
 

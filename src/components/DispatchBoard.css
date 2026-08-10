@@ -79,6 +79,13 @@
   color: var(--text-secondary);
 }
 
+.dispatch-board__import-progress button {
+  padding: 0.3rem 0.55rem;
+  border-color: var(--error);
+  color: #ffb4b4;
+  font-size: 0.75rem;
+}
+
 .dispatch-board__loading {
   padding: 2rem;
   text-align: center;

@@ -7,6 +7,7 @@ import {
   query,
   setDoc,
   Timestamp,
+  updateDoc,
   type Unsubscribe,
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
@@ -17,7 +18,7 @@ export interface WorkOrderImportProgress {
   id: string;
   channelId: string;
   channelName: string;
-  status: 'queued' | 'processing' | 'completed' | 'failed';
+  status: 'queued' | 'processing' | 'completed' | 'failed' | 'canceled';
   total: number;
   processed: number;
   imported: number;
@@ -39,7 +40,8 @@ function serializeProgress(
     status:
       data.status === 'queued' ||
       data.status === 'completed' ||
-      data.status === 'failed'
+      data.status === 'failed' ||
+      data.status === 'canceled'
         ? data.status
         : 'processing',
     total: typeof data.total === 'number' ? data.total : 0,
@@ -63,6 +65,14 @@ export async function saveWorkOrderImportProgress(
     },
     { merge: true }
   );
+}
+
+export async function cancelWorkOrderImport(runId: string) {
+  await updateDoc(doc(db, IMPORT_RUNS_COLLECTION, runId), {
+    status: 'canceled',
+    message: 'Canceled by user.',
+    updatedAt: Timestamp.now(),
+  });
 }
 
 export function subscribeLatestWorkOrderImportProgress(

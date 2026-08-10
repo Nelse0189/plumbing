@@ -179,6 +179,13 @@
   color: var(--text-secondary);
 }
 
+.teams-test__import-progress button {
+  padding: 0.3rem 0.55rem;
+  border-color: var(--error);
+  color: #ffb4b4;
+  font-size: 0.75rem;
+}
+
 .teams-test__panel ul,
 .teams-test__message-list {
   list-style: none;

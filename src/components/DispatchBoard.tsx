@@ -18,6 +18,7 @@ import {
 } from '../utils/dispatchWindows';
 import { initiateVoiceWindowConfirmation } from '../services/voiceConfirmationService';
 import {
+  cancelWorkOrderImport,
   subscribeLatestWorkOrderImportProgress,
   type WorkOrderImportProgress,
 } from '../services/importProgressService';
@@ -296,6 +297,7 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
   const [error, setError] = useState<string | null>(null);
   const [importProgress, setImportProgress] =
     useState<WorkOrderImportProgress | null>(null);
+  const [cancelingImport, setCancelingImport] = useState(false);
   const [callingStopId, setCallingStopId] = useState<string | null>(null);
   const [closingStopId, setClosingStopId] = useState<string | null>(null);
   const [deletingStopId, setDeletingStopId] = useState<string | null>(null);
@@ -700,6 +702,8 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
               ? 'Teams import in progress'
               : importProgress.status === 'failed'
                 ? 'Teams import needs attention'
+                : importProgress.status === 'canceled'
+                  ? 'Teams import canceled'
                 : 'Latest Teams import'}
           </strong>
           <span>
@@ -709,6 +713,25 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
             {importProgress.failed ? ` · ${importProgress.failed} failed` : ''}
           </span>
           {importProgress.message && <small>{importProgress.message}</small>}
+          {(importProgress.status === 'queued' ||
+            importProgress.status === 'processing') && (
+            <button
+              type="button"
+              disabled={cancelingImport}
+              onClick={async () => {
+                setCancelingImport(true);
+                try {
+                  await cancelWorkOrderImport(importProgress.id);
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : String(err));
+                } finally {
+                  setCancelingImport(false);
+                }
+              }}
+            >
+              {cancelingImport ? 'Canceling…' : 'Cancel import'}
+            </button>
+          )}
         </div>
       )}
 

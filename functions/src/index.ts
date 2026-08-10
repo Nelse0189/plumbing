@@ -970,6 +970,10 @@ export const processTeamsChannelImport = onDocumentCreated(
       let cached = 0;
       let failed = 0;
       for (const { post, attachment } of jobs) {
+        const currentRun = await runRef.get();
+        if (asTrimmedString(currentRun.data()?.status) === "canceled") {
+          return;
+        }
         try {
           const replies = await graphBatchFetch<{ value: TeamsBatchMessage[] }>(
             token,
