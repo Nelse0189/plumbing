@@ -57,6 +57,28 @@
   color: var(--success);
 }
 
+.dispatch-board__import-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 0.65rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: rgba(216, 178, 79, 0.1);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+}
+
+.dispatch-board__import-progress strong {
+  color: var(--accent);
+}
+
+.dispatch-board__import-progress small {
+  flex-basis: 100%;
+  color: var(--text-secondary);
+}
+
 .dispatch-board__loading {
   padding: 2rem;
   text-align: center;

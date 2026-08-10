@@ -13,6 +13,10 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    match /workOrderImportRuns/{document} {
+      allow read, write: if true;
+    }
+
     match /dispatchPlans/{document} {
       allow read, write: if true;
     }

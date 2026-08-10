@@ -35,6 +35,7 @@ import {
   listWorkOrders,
   saveWorkOrder,
 } from '../services/workOrderService';
+import { saveWorkOrderImportProgress } from '../services/importProgressService';
 import type { StoredWorkOrder, WorkOrder } from '../types';
 import '../index.css';
 import './teams-test.css';
@@ -467,9 +468,21 @@ function TeamsGraphTestApp() {
           pdfAttachments.length === 1 ? '' : 's'
         } from Firebase / AI…`
       );
+      await saveWorkOrderImportProgress({
+        channelId,
+        channelName: selectedChannelName || 'Teams channel',
+        status: 'processing',
+        total: pdfAttachments.length,
+        processed: 0,
+        imported: 0,
+        cached: 0,
+        failed: 0,
+        message: 'Keep the Teams Channels page open while PDFs are processed.',
+      });
 
       let importedCount = 0;
       let cachedCount = 0;
+      let failedCount = 0;
       for (const item of pdfAttachments) {
         if (generation !== channelImportGenerationRef.current) return;
         const result = await importPdfAttachment(
@@ -479,18 +492,47 @@ function TeamsGraphTestApp() {
           item.message.id,
           item.attachment
         );
-        if (!result) continue;
-        if (result.cached) cachedCount += 1;
-        else importedCount += 1;
+        if (!result) {
+          failedCount += 1;
+        } else if (result.cached) {
+          cachedCount += 1;
+        } else {
+          importedCount += 1;
+        }
+        await saveWorkOrderImportProgress({
+          channelId,
+          channelName: selectedChannelName || 'Teams channel',
+          status: 'processing',
+          total: pdfAttachments.length,
+          processed: importedCount + cachedCount + failedCount,
+          imported: importedCount,
+          cached: cachedCount,
+          failed: failedCount,
+          message: 'Keep the Teams Channels page open while PDFs are processed.',
+        });
       }
 
       if (generation !== channelImportGenerationRef.current) return;
       setChannelImportStatus(
-        `Channel jobs ready: ${importedCount} imported, ${cachedCount} loaded from Firebase.`
+        `Channel jobs ready: ${importedCount} imported, ${cachedCount} loaded from Firebase, ${failedCount} failed.`
       );
+      await saveWorkOrderImportProgress({
+        channelId,
+        channelName: selectedChannelName || 'Teams channel',
+        status: failedCount === pdfAttachments.length ? 'failed' : 'completed',
+        total: pdfAttachments.length,
+        processed: importedCount + cachedCount + failedCount,
+        imported: importedCount,
+        cached: cachedCount,
+        failed: failedCount,
+        message:
+          failedCount > 0
+            ? 'Some PDFs could not be imported; check the Teams channel for errors.'
+            : 'Import complete.',
+      });
       await refreshWorkOrders();
     },
-    [importPdfAttachment, refreshWorkOrders]
+    [importPdfAttachment, refreshWorkOrders, selectedChannelName]
   );
 
   const handleSelectChannel = async (channel: GraphChannel) => {

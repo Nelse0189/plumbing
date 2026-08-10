@@ -17,6 +17,10 @@ import {
   formatWindowLabel,
 } from '../utils/dispatchWindows';
 import { initiateVoiceWindowConfirmation } from '../services/voiceConfirmationService';
+import {
+  subscribeLatestWorkOrderImportProgress,
+  type WorkOrderImportProgress,
+} from '../services/importProgressService';
 import './DispatchBoard.css';
 
 interface DispatchBoardProps {
@@ -290,6 +294,8 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [importProgress, setImportProgress] =
+    useState<WorkOrderImportProgress | null>(null);
   const [callingStopId, setCallingStopId] = useState<string | null>(null);
   const [closingStopId, setClosingStopId] = useState<string | null>(null);
   const [deletingStopId, setDeletingStopId] = useState<string | null>(null);
@@ -334,6 +340,13 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
       unsubscribe();
     };
   }, [selectedDate, boardEpoch]);
+
+  useEffect(() => {
+    return subscribeLatestWorkOrderImportProgress(
+      setImportProgress,
+      (err) => console.warn('Could not subscribe to import progress:', err)
+    );
+  }, []);
 
   // Clear the per-stop "Calling…" button state once Firestore reports progress.
   useEffect(() => {
@@ -678,6 +691,24 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
 
       {error && <div className="dispatch-board__error">{error}</div>}
       {status && <div className="dispatch-board__status">{status}</div>}
+      {importProgress && (
+        <div className="dispatch-board__import-progress">
+          <strong>
+            {importProgress.status === 'processing'
+              ? 'Teams import in progress'
+              : importProgress.status === 'failed'
+                ? 'Teams import needs attention'
+                : 'Latest Teams import'}
+          </strong>
+          <span>
+            {importProgress.channelName}: {importProgress.processed}/
+            {importProgress.total} PDFs processed · {importProgress.imported}{' '}
+            imported · {importProgress.cached} cached
+            {importProgress.failed ? ` · ${importProgress.failed} failed` : ''}
+          </span>
+          {importProgress.message && <small>{importProgress.message}</small>}
+        </div>
+      )}
 
       <div className="dispatch-board__lanes">
         <section

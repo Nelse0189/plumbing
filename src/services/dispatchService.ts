@@ -468,8 +468,8 @@ async function syncDispatchTruckToSchedule(
     jobType: stop.jobType,
     notes: stop.notes,
     time: stop.window.start,
-    lat: stop.lat,
-    lng: stop.lng,
+    ...(stop.lat === undefined ? {} : { lat: stop.lat }),
+    ...(stop.lng === undefined ? {} : { lng: stop.lng }),
   }));
 
   let found = false;
