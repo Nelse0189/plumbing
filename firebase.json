@@ -56,6 +56,10 @@
     ],
     "rewrites": [
       {
+        "source": "/teams-test",
+        "destination": "/teams-test.html"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

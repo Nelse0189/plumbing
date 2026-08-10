@@ -2,6 +2,7 @@ import { StrictMode, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   acquireToken,
+  azureConfigError,
   getActiveAccount,
   handleRedirectPromise,
   signIn,
@@ -115,6 +116,11 @@ function TeamsGraphTestApp() {
   }, [refreshWorkOrders]);
 
   useEffect(() => {
+    if (azureConfigError) {
+      setError(azureConfigError);
+      setLoading(false);
+      return;
+    }
     handleRedirectPromise()
       .then(() => loadSignedInState())
       .catch((err) => {
@@ -346,7 +352,11 @@ function TeamsGraphTestApp() {
               Sign out
             </button>
           ) : (
-            <button type="button" onClick={() => signIn()}>
+            <button
+              type="button"
+              disabled={Boolean(azureConfigError)}
+              onClick={() => signIn()}
+            >
               Sign in with Microsoft
             </button>
           )}

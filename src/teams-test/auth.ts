@@ -1,13 +1,12 @@
 import { PublicClientApplication, type AccountInfo } from '@azure/msal-browser';
 
-const clientId = import.meta.env.VITE_AZURE_CLIENT_ID as string;
-const tenantId = import.meta.env.VITE_AZURE_TENANT_ID as string;
+const clientId = (import.meta.env.VITE_AZURE_CLIENT_ID as string | undefined)?.trim() || '';
+const tenantId = (import.meta.env.VITE_AZURE_TENANT_ID as string | undefined)?.trim() || '';
 
-if (!clientId || !tenantId) {
-  throw new Error(
-    'Missing VITE_AZURE_CLIENT_ID or VITE_AZURE_TENANT_ID in .env.local'
-  );
-}
+export const azureConfigError =
+  !clientId || !tenantId
+    ? 'Missing VITE_AZURE_CLIENT_ID or VITE_AZURE_TENANT_ID. Add them to .env.local and rebuild hosting.'
+    : null;
 
 export const graphScopes = [
   'User.Read',
@@ -17,64 +16,77 @@ export const graphScopes = [
   'Files.Read.All',
 ];
 
-export const msalInstance = new PublicClientApplication({
-  auth: {
-    clientId,
-    authority: `https://login.microsoftonline.com/${tenantId}`,
-    redirectUri: window.location.origin + window.location.pathname,
-  },
-  cache: {
-    cacheLocation: 'sessionStorage',
-  },
-});
+export const msalInstance = azureConfigError
+  ? null
+  : new PublicClientApplication({
+      auth: {
+        clientId,
+        authority: `https://login.microsoftonline.com/${tenantId}`,
+        redirectUri: window.location.origin + window.location.pathname,
+      },
+      cache: {
+        cacheLocation: 'sessionStorage',
+      },
+    });
 
 let initialized = false;
 
+function requireMsal() {
+  if (!msalInstance) {
+    throw new Error(azureConfigError || 'Azure sign-in is not configured');
+  }
+  return msalInstance;
+}
+
 export async function ensureMsalInitialized() {
+  const instance = requireMsal();
   if (!initialized) {
-    await msalInstance.initialize();
+    await instance.initialize();
     initialized = true;
   }
+  return instance;
 }
 
 export async function handleRedirectPromise() {
-  await ensureMsalInitialized();
-  return msalInstance.handleRedirectPromise();
+  if (!msalInstance) return null;
+  const instance = await ensureMsalInitialized();
+  return instance.handleRedirectPromise();
 }
 
 export function getActiveAccount(): AccountInfo | null {
+  if (!msalInstance) return null;
   const accounts = msalInstance.getAllAccounts();
   return accounts[0] ?? null;
 }
 
 export async function signIn() {
-  await ensureMsalInitialized();
-  await msalInstance.loginRedirect({ scopes: graphScopes });
+  const instance = await ensureMsalInitialized();
+  await instance.loginRedirect({ scopes: graphScopes });
 }
 
 export async function signOut() {
-  await ensureMsalInitialized();
+  const instance = await ensureMsalInitialized();
   const account = getActiveAccount();
-  await msalInstance.logoutRedirect({
+  await instance.logoutRedirect({
     account: account ?? undefined,
   });
 }
 
 export async function acquireToken() {
-  await ensureMsalInitialized();
+  const instance = await ensureMsalInitialized();
   const account = getActiveAccount();
   if (!account) {
     throw new Error('Not signed in');
   }
 
   try {
-    const result = await msalInstance.acquireTokenSilent({
+    const result = await instance.acquireTokenSilent({
       scopes: graphScopes,
       account,
     });
     return result.accessToken;
   } catch {
-    await msalInstance.acquireTokenRedirect({
+    await instance.acquireTokenRedirect({
       scopes: graphScopes,
       account,
     });
