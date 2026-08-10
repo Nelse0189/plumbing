@@ -27,6 +27,24 @@
         ]
       },
       {
+        "source": "/teams-test",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-store, max-age=0"
+          }
+        ]
+      },
+      {
+        "source": "/teams-test.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-store, max-age=0"
+          }
+        ]
+      },
+      {
         "source": "/sms-consent",
         "headers": [
           {
