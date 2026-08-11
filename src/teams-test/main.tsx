@@ -147,15 +147,10 @@ function collectChannelNotesForWorkOrder(
   return lines.join('\n\n');
 }
 
-function mergeWorkOrderNotes(aiNotes: string, channelNotes: string) {
-  const cleanedAi = aiNotes.trim();
-  const cleanedChannel = channelNotes.trim();
-  if (!cleanedChannel) return cleanedAi;
-  if (!cleanedAi) return `Channel notes:\n${cleanedChannel}`;
-  if (cleanedAi.toLowerCase().includes(cleanedChannel.toLowerCase())) {
-    return cleanedAi;
-  }
-  return `${cleanedAi}\n\nChannel notes:\n${cleanedChannel}`;
+function mergeWorkOrderNotes(aiNotes: string, _channelNotes: string) {
+  // The server summarizes actionable thread updates. Do not append the raw
+  // thread here or generic customer-facing boilerplate returns to the job.
+  return aiNotes.trim();
 }
 
 function sortMessages(messages: GraphMessage[], sort: MessageSort) {

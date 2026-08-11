@@ -270,7 +270,7 @@ export default function MapView({ trucks, selectedDate }: MapViewProps) {
                         whiteSpace: 'pre-wrap',
                       }}
                     >
-                      <strong>Notes</strong>
+                      <strong>Thread &amp; job notes</strong>
                       <div>{selectedStop.stop.notes}</div>
                     </div>
                   )}

@@ -171,13 +171,13 @@ const workOrderExtractionInstructions = [
   "Return empty strings for unknown fields.",
   "customerName: full customer or contact name only. phone: primary US customer phone normalized to +1XXXXXXXXXX. address: full service address. jobType: short installation/service label.",
   "appointmentDate: requested/install date as YYYY-MM-DD. appointmentTime: requested time as HH:MM 24-hour, otherwise empty.",
-  "notes: concise plumber-facing installation/access/equipment summary, not raw PDF text.",
+  "notes: concise plumber-facing summary of actionable installation/access/equipment/permit/customer instructions and relevant Teams reply updates. Never copy generic sales-order boilerplate, legal terms, confirmation instructions, warranty language, marketing, pricing disclaimers, or customer email/text scripts.",
   "STRICT SCHEDULING RULE: appointmentDate and appointmentTime may only come from an explicit scheduling instruction in PDF Notes, Comments, Special Instructions, or dated Teams post/reply notes. Never use a work-order received, created, issued, printed, invoice, or document date as the schedule date.",
   "Thread entries contain timestamps and are chronological. If multiple scheduling instructions conflict, the latest dated note that explicitly requests, books, or reschedules service wins. If no explicit scheduling instruction exists in those Notes/comments/thread entries, return empty appointmentDate and appointmentTime.",
 ].join(" ");
 
 // Bump this when scheduling rules change so cached work orders are refreshed.
-const WORK_ORDER_EXTRACTION_VERSION = "scheduling-notes-v3";
+const WORK_ORDER_EXTRACTION_VERSION = "scheduling-notes-v4";
 
 async function extractBackgroundWorkOrder(
   text: string,
@@ -222,16 +222,7 @@ async function extractBackgroundWorkOrder(
   });
   const content = result.choices[0]?.message.content;
   if (!content) throw new Error("OpenAI returned an empty response");
-  const extracted = normalizeWorkOrder(parseJsonObject(content), sourceFileName);
-  if (!channelNote || extracted.notes.toLowerCase().includes(channelNote.toLowerCase())) {
-    return extracted;
-  }
-  return {
-    ...extracted,
-    notes: extracted.notes
-      ? `${extracted.notes}\n\nChannel notes:\n${channelNote}`
-      : `Channel notes:\n${channelNote}`,
-  };
+  return normalizeWorkOrder(parseJsonObject(content), sourceFileName);
 }
 
 function asTrimmedString(value: unknown): string {
@@ -262,6 +253,19 @@ function parseJsonObject(text: string): Record<string, unknown> {
   return JSON.parse(withoutFences.slice(start, end + 1)) as Record<string, unknown>;
 }
 
+function sanitizePlumberNotes(value: string): string {
+  // This known sales-order template is customer-facing boilerplate, not a job note.
+  const boilerplateStart = value.search(
+    /Dear Customer:\s*Your sales order is attached/i
+  );
+  const withoutSalesOrder =
+    boilerplateStart >= 0 ? value.slice(0, boilerplateStart) : value;
+  return withoutSalesOrder
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, 5000);
+}
+
 function normalizeWorkOrder(
   value: Record<string, unknown>,
   sourceFileName: string
@@ -280,7 +284,7 @@ function normalizeWorkOrder(
     jobType: asTrimmedString(value.jobType),
     appointmentDate: asTrimmedString(value.appointmentDate),
     appointmentTime: asTrimmedString(value.appointmentTime),
-    notes: asTrimmedString(value.notes),
+    notes: sanitizePlumberNotes(asTrimmedString(value.notes)),
     sourceFileName,
     smsConsent: value.smsConsent === true,
     ...(confidence === undefined ? {} : { confidence }),
@@ -415,7 +419,7 @@ export const extractWorkOrder = onCall(
               "- workOrderNumber: document/work-order/job number if present",
               "- notes: short plumber-facing summary of installation details, access notes, equipment, or special instructions from the PDF, plus any relevant Teams channel notes. Do not paste the raw PDF. Keep it concise.",
               "- confidence: 0 to 1 for how complete and certain the extraction is",
-              "STRICT SCHEDULING RULE: only extract appointmentDate/appointmentTime from explicit scheduling instructions in Notes, Comments, Special Instructions, or chronological Teams post/reply notes. Never use work-order received, created, issued, printed, invoice, or document dates. When dated scheduling notes conflict, the latest note that explicitly requests, books, or reschedules service wins. Otherwise leave both fields empty.",
+              "STRICT SCHEDULING RULE: only extract appointmentDate/appointmentTime from explicit scheduling instructions in Notes, Comments, Special Instructions, or chronological Teams post/reply notes. Never use work-order received, created, issued, printed, invoice, or document dates. When dated scheduling notes conflict, the latest note that explicitly requests, books, or reschedules service wins. Otherwise leave both fields empty. Notes must contain only actionable plumber information; omit generic sales-order boilerplate, legal terms, customer confirmation instructions, and marketing.",
             ].join(" "),
           },
           {
@@ -661,7 +665,7 @@ export const importChannelPdfWorkOrder = onCall(
               "- workOrderNumber: document/work-order/job number if present",
               "- notes: short plumber-facing summary of installation details, access notes, equipment, or special instructions from the PDF, plus any relevant Teams channel notes. Do not paste the raw PDF. Keep it concise.",
               "- confidence: 0 to 1 for how complete and certain the extraction is",
-              "STRICT SCHEDULING RULE: only extract appointmentDate/appointmentTime from explicit scheduling instructions in PDF Notes, Comments, Special Instructions, or dated Teams post/reply notes. Never use work-order received, created, issued, printed, invoice, or document dates. When chronological notes conflict, the latest dated note that explicitly requests, books, or reschedules service wins. Otherwise leave both fields empty. Also fold useful thread details into notes.",
+              "STRICT SCHEDULING RULE: only extract appointmentDate/appointmentTime from explicit scheduling instructions in PDF Notes, Comments, Special Instructions, or dated Teams post/reply notes. Never use work-order received, created, issued, printed, invoice, or document dates. When chronological notes conflict, the latest dated note that explicitly requests, books, or reschedules service wins. Otherwise leave both fields empty. Notes must include only actionable plumber details from the thread; omit generic sales-order boilerplate, legal terms, customer confirmation instructions, and marketing.",
             ].join(" "),
           },
           {
@@ -727,20 +731,6 @@ export const importChannelPdfWorkOrder = onCall(
     } catch (error) {
       console.error("Automatic channel PDF import failed:", error);
       throw new HttpsError("internal", "Failed to import the channel PDF work order");
-    }
-
-    if (channelNote) {
-      const alreadyIncludes = extracted.notes
-        .toLowerCase()
-        .includes(channelNote.toLowerCase());
-      if (!alreadyIncludes) {
-        extracted = {
-          ...extracted,
-          notes: extracted.notes.trim()
-            ? `${extracted.notes.trim()}\n\nChannel notes:\n${channelNote}`
-            : `Channel notes:\n${channelNote}`,
-        };
-      }
     }
 
     const status = workOrderIsDispatchReady(extracted)
