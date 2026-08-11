@@ -77,6 +77,18 @@ function messageHasPdf(message: GraphMessage) {
   );
 }
 
+function messageSearchText(message: GraphMessage): string {
+  return [
+    message.subject,
+    stripHtml(message.body?.content ?? ''),
+    ...(message.attachments || []).map((attachment) => attachment.name),
+    ...(message.replies || []).map((reply) => stripHtml(reply.body?.content ?? '')),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLocaleLowerCase();
+}
+
 function formatChannelNoteLine(
   message: GraphMessage,
   body: string,
@@ -169,11 +181,30 @@ function TeamsGraphTestApp() {
   const [selectedTeamName, setSelectedTeamName] = useState('');
   const [selectedChannelName, setSelectedChannelName] = useState('');
   const [messageSort, setMessageSort] = useState<MessageSort>('newest');
+  const [salesOrderSearch, setSalesOrderSearch] = useState('');
 
   const sortedMessages = useMemo(
     () => sortMessages(messages, messageSort),
     [messages, messageSort]
   );
+  const visibleMessages = useMemo(() => {
+    const query = salesOrderSearch.trim().toLocaleLowerCase();
+    if (!query) return sortedMessages;
+
+    const matchingMessageIds = new Set(
+      storedWorkOrders
+        .filter((workOrder) =>
+          workOrder.workOrderNumber.toLocaleLowerCase().includes(query)
+        )
+        .map((workOrder) => workOrder.teamsMessageId)
+        .filter((messageId): messageId is string => Boolean(messageId))
+    );
+
+    return sortedMessages.filter(
+      (message) =>
+        matchingMessageIds.has(message.id) || messageSearchText(message).includes(query)
+    );
+  }, [salesOrderSearch, sortedMessages, storedWorkOrders]);
 
   const refreshWorkOrders = useCallback(async (showLoading = false) => {
     if (!getActiveAccount()) return;
@@ -414,6 +445,7 @@ function TeamsGraphTestApp() {
     setSelectedChannelId(channel.id);
     setSelectedChannelName(channel.displayName);
     setMessages([]);
+    setSalesOrderSearch('');
     setProcessedWorkOrders({});
     setChannelImportStatus(null);
     clearPdfCache();
@@ -765,6 +797,16 @@ function TeamsGraphTestApp() {
                       <option value="has-pdf">PDFs first</option>
                     </select>
                   </label>
+                  <label className="teams-test__sales-search">
+                    <span>Sales order</span>
+                    <input
+                      type="search"
+                      value={salesOrderSearch}
+                      onChange={(event) => setSalesOrderSearch(event.target.value)}
+                      placeholder="Search order #"
+                      aria-label="Search sales order number"
+                    />
+                  </label>
                   <button
                     type="button"
                     className="teams-test__weekly-import"
@@ -830,9 +872,13 @@ function TeamsGraphTestApp() {
               <p className="teams-test__hint">
                 Select a team and channel to load messages
               </p>
+            ) : visibleMessages.length === 0 ? (
+              <p className="teams-test__hint">
+                No loaded messages match sales order “{salesOrderSearch}”.
+              </p>
             ) : (
               <ul className="teams-test__message-list">
-                {sortedMessages.map((message) => (
+                {visibleMessages.map((message) => (
                   <li key={message.id} className="teams-test__message">
                     <div className="teams-test__message-meta">
                       <strong>{message.from?.user?.displayName ?? 'Unknown'}</strong>

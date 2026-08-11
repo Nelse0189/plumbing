@@ -151,6 +151,20 @@
   min-width: 9.5rem;
 }
 
+.teams-test__sales-search {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.teams-test__sales-search input {
+  width: 9rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+}
+
 .teams-test__weekly-import {
   padding: 0.35rem 0.55rem;
   border-color: var(--success);
