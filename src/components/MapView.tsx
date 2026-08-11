@@ -194,16 +194,34 @@ export default function MapView({ trucks, selectedDate }: MapViewProps) {
                 />
               );
             })}
-            {markers.map((marker, index) => (
-              marker && (
-                <Marker
-                  key={index}
-                  position={marker.position}
-                  label={marker.label}
-                  title={marker.title}
-                />
-              )
-            ))}
+            {truckRoutes.flatMap((truck) => {
+              const legs = directions[truck.id]?.routes[0]?.legs || [];
+              return legs.map((leg, index) => {
+                const stop = truck.stops[index];
+                return (
+                  <Marker
+                    key={`${truck.id}-stop-${index}`}
+                    position={leg.end_location}
+                    label={String(index + 1)}
+                    title={`${truck.name} · Stop ${index + 1}: ${
+                      stop?.customerName || stop?.address || 'Scheduled stop'
+                    }`}
+                  />
+                );
+              });
+            })}
+            {truckRoutes.length === 0 &&
+              markers.map(
+                (marker, index) =>
+                  marker && (
+                    <Marker
+                      key={index}
+                      position={marker.position}
+                      label={marker.label}
+                      title={marker.title}
+                    />
+                  )
+              )}
           </GoogleMap>
         </LoadScript>
       </div>
@@ -218,11 +236,12 @@ export default function MapView({ trucks, selectedDate }: MapViewProps) {
         )}
         {truckRoutes.length > 0 && (
           <p style={{ marginTop: '0.5rem' }}>
-            Colored lines show each truck’s stop order. Routes use the order on the
-            schedule and do not automatically reorder stops.
+            Colored lines show each truck’s stop order. Numbered markers identify
+            each stop. Routes use the order on the schedule and do not automatically
+            reorder stops.
           </p>
         )}
-        {allStops.some(s => !s.lat || !s.lng) && (
+        {truckRoutes.length === 0 && allStops.some(s => !s.lat || !s.lng) && (
           <p style={{ color: 'var(--accent)', marginTop: '0.5rem' }}>
             Note: Some stops may not appear on the map until addresses are geocoded
           </p>
