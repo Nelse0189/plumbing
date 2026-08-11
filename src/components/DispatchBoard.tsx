@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type DragEvent } from 'react';
+import { createPortal } from 'react-dom';
 import type { DispatchPlan, DispatchStop, DispatchTruck } from '../types';
 import {
   autoOrderAllUnsetTrucks,
@@ -105,6 +106,15 @@ function StopNode({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const hasNotes = Boolean(stop.notes?.trim());
 
+  useEffect(() => {
+    if (!detailsOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDetailsOpen(false);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [detailsOpen]);
+
   return (
     <article
       className={`dispatch-node ${locked ? 'dispatch-node--locked' : ''}`}
@@ -175,60 +185,68 @@ function StopNode({
           {hasNotes ? 'Notes & details' : 'No notes'}
         </button>
       </div>
-      {detailsOpen && (
-        <div
-          className="dispatch-details-modal"
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Notes for ${stop.workOrderNumber || stop.customerName || 'job'}`}
-          onMouseDown={(event) => event.stopPropagation()}
-          onClick={(event) => event.stopPropagation()}
-        >
+      {detailsOpen &&
+        createPortal(
           <div
-            className="dispatch-details-modal__backdrop"
-            onClick={() => setDetailsOpen(false)}
-          />
-          <div className="dispatch-details-modal__panel">
-            <header className="dispatch-details-modal__header">
-              <div>
-                <strong>{stop.workOrderNumber || 'No WO#'}</strong>
-                <p>{stop.customerName || 'Unknown customer'}</p>
-              </div>
-              <button type="button" onClick={() => setDetailsOpen(false)}>
-                Close
-              </button>
-            </header>
-            <dl className="dispatch-details-modal__facts">
-              <div>
-                <dt>Phone</dt>
-                <dd>{stop.phone || '—'}</dd>
-              </div>
-              <div>
-                <dt>Address</dt>
-                <dd>{stop.address || '—'}</dd>
-              </div>
-              <div>
-                <dt>Job type</dt>
-                <dd>{stop.jobType || '—'}</dd>
-              </div>
-              <div>
-                <dt>Window</dt>
-                <dd>{formatWindowLabel(stop.window)}</dd>
-              </div>
-            </dl>
-            <section className="dispatch-details-modal__notes">
-              <h3>Notes</h3>
-              {hasNotes ? (
-                <pre>{stop.notes}</pre>
-              ) : (
-                <p className="dispatch-details-modal__empty">
-                  No notes on this work order yet.
-                </p>
-              )}
-            </section>
-          </div>
-        </div>
-      )}
+            className="dispatch-details-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Notes for ${stop.workOrderNumber || stop.customerName || 'job'}`}
+          >
+            <div
+              className="dispatch-details-modal__backdrop"
+              onClick={() => setDetailsOpen(false)}
+            />
+            <div
+              className="dispatch-details-modal__panel"
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <header className="dispatch-details-modal__header">
+                <div>
+                  <strong>{stop.workOrderNumber || 'No WO#'}</strong>
+                  <p>{stop.customerName || 'Unknown customer'}</p>
+                </div>
+                <button
+                  type="button"
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={() => setDetailsOpen(false)}
+                >
+                  Close
+                </button>
+              </header>
+              <dl className="dispatch-details-modal__facts">
+                <div>
+                  <dt>Phone</dt>
+                  <dd>{stop.phone || '—'}</dd>
+                </div>
+                <div>
+                  <dt>Address</dt>
+                  <dd>{stop.address || '—'}</dd>
+                </div>
+                <div>
+                  <dt>Job type</dt>
+                  <dd>{stop.jobType || '—'}</dd>
+                </div>
+                <div>
+                  <dt>Window</dt>
+                  <dd>{formatWindowLabel(stop.window)}</dd>
+                </div>
+              </dl>
+              <section className="dispatch-details-modal__notes">
+                <h3>Notes</h3>
+                {hasNotes ? (
+                  <pre>{stop.notes}</pre>
+                ) : (
+                  <p className="dispatch-details-modal__empty">
+                    No notes on this work order yet.
+                  </p>
+                )}
+              </section>
+            </div>
+          </div>,
+          document.body
+        )}
       <div className="dispatch-node__controls">
         <label>
           Priority
