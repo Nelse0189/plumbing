@@ -3,10 +3,11 @@ import {
   DirectionsRenderer,
   DirectionsService,
   GoogleMap,
+  InfoWindow,
   LoadScript,
   Marker,
 } from '@react-google-maps/api';
-import type { Truck } from '../types';
+import type { Stop, Truck } from '../types';
 import { DEFAULT_DISPATCH_ORIGIN } from '../utils/dispatchWindows';
 
 interface MapViewProps {
@@ -24,10 +25,18 @@ const defaultCenter = {
   lng: -72.7272,
 };
 
+interface SelectedMapStop {
+  truckName: string;
+  stopNumber: number;
+  stop: Stop;
+  position: google.maps.LatLng | google.maps.LatLngLiteral;
+}
+
 export default function MapView({ trucks, selectedDate }: MapViewProps) {
   const [directions, setDirections] = useState<
     Record<string, google.maps.DirectionsResult>
   >({});
+  const [selectedStop, setSelectedStop] = useState<SelectedMapStop | null>(null);
 
   const allStops = useMemo(() => {
     return trucks.flatMap(truck =>
@@ -76,6 +85,7 @@ export default function MapView({ trucks, selectedDate }: MapViewProps) {
 
   useEffect(() => {
     setDirections({});
+    setSelectedStop(null);
   }, [routeKey]);
 
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
@@ -206,6 +216,15 @@ export default function MapView({ trucks, selectedDate }: MapViewProps) {
                     title={`${truck.name} · Stop ${index + 1}: ${
                       stop?.customerName || stop?.address || 'Scheduled stop'
                     }`}
+                    onClick={() => {
+                      if (!stop) return;
+                      setSelectedStop({
+                        truckName: truck.name,
+                        stopNumber: index + 1,
+                        stop,
+                        position: leg.end_location,
+                      });
+                    }}
                   />
                 );
               });
@@ -222,6 +241,42 @@ export default function MapView({ trucks, selectedDate }: MapViewProps) {
                     />
                   )
               )}
+            {selectedStop && (
+              <InfoWindow
+                position={selectedStop.position}
+                onCloseClick={() => setSelectedStop(null)}
+              >
+                <div style={{ maxWidth: '260px', color: '#202124', lineHeight: 1.4 }}>
+                  <strong>
+                    {selectedStop.truckName} · Stop {selectedStop.stopNumber}
+                  </strong>
+                  <div style={{ marginTop: '0.45rem' }}>
+                    <strong>{selectedStop.stop.customerName || 'Customer TBD'}</strong>
+                  </div>
+                  <div>{selectedStop.stop.address || 'No address'}</div>
+                  <div style={{ marginTop: '0.35rem' }}>
+                    {selectedStop.stop.jobType || 'Job type TBD'}
+                  </div>
+                  <div>Scheduled: {selectedStop.stop.time || 'Time TBD'}</div>
+                  {selectedStop.stop.phone && (
+                    <div>Phone: {selectedStop.stop.phone}</div>
+                  )}
+                  {selectedStop.stop.notes && (
+                    <div
+                      style={{
+                        marginTop: '0.5rem',
+                        paddingTop: '0.45rem',
+                        borderTop: '1px solid #dadce0',
+                        whiteSpace: 'pre-wrap',
+                      }}
+                    >
+                      <strong>Notes</strong>
+                      <div>{selectedStop.stop.notes}</div>
+                    </div>
+                  )}
+                </div>
+              </InfoWindow>
+            )}
           </GoogleMap>
         </LoadScript>
       </div>
