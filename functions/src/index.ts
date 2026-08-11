@@ -172,8 +172,12 @@ const workOrderExtractionInstructions = [
   "customerName: full customer or contact name only. phone: primary US customer phone normalized to +1XXXXXXXXXX. address: full service address. jobType: short installation/service label.",
   "appointmentDate: requested/install date as YYYY-MM-DD. appointmentTime: requested time as HH:MM 24-hour, otherwise empty.",
   "notes: concise plumber-facing installation/access/equipment summary, not raw PDF text.",
-  "Read scheduling information in Notes, Comments, Special Instructions, Requested Date/Time, Teams posts, and Teams replies. Clear requested/booked/rescheduled dates and times in the thread are the scheduling source of truth.",
+  "STRICT SCHEDULING RULE: appointmentDate and appointmentTime may only come from an explicit scheduling instruction in PDF Notes, Comments, Special Instructions, or dated Teams post/reply notes. Never use a work-order received, created, issued, printed, invoice, or document date as the schedule date.",
+  "Thread entries contain timestamps and are chronological. If multiple scheduling instructions conflict, the latest dated note that explicitly requests, books, or reschedules service wins. If no explicit scheduling instruction exists in those Notes/comments/thread entries, return empty appointmentDate and appointmentTime.",
 ].join(" ");
+
+// Bump this when scheduling rules change so cached work orders are refreshed.
+const WORK_ORDER_EXTRACTION_VERSION = "scheduling-notes-v3";
 
 async function extractBackgroundWorkOrder(
   text: string,
@@ -411,7 +415,7 @@ export const extractWorkOrder = onCall(
               "- workOrderNumber: document/work-order/job number if present",
               "- notes: short plumber-facing summary of installation details, access notes, equipment, or special instructions from the PDF, plus any relevant Teams channel notes. Do not paste the raw PDF. Keep it concise.",
               "- confidence: 0 to 1 for how complete and certain the extraction is",
-              "Read scheduling information wherever it appears: labeled Notes, Comments, Special Instructions, Requested Date/Time, and Teams post/reply text. If those notes clearly state a requested, booked, or rescheduled date/time, use it for appointmentDate/appointmentTime and include the context in notes.",
+              "STRICT SCHEDULING RULE: only extract appointmentDate/appointmentTime from explicit scheduling instructions in Notes, Comments, Special Instructions, or chronological Teams post/reply notes. Never use work-order received, created, issued, printed, invoice, or document dates. When dated scheduling notes conflict, the latest note that explicitly requests, books, or reschedules service wins. Otherwise leave both fields empty.",
             ].join(" "),
           },
           {
@@ -598,7 +602,9 @@ export const importChannelPdfWorkOrder = onCall(
     const recordId = channelAttachmentWorkOrderId(messageId, attachmentId);
     const recordRef = db.collection("workOrders").doc(recordId);
     const existing = await recordRef.get();
-    const threadHash = createHash("sha256").update(channelNote).digest("hex");
+    const threadHash = createHash("sha256")
+      .update(`${WORK_ORDER_EXTRACTION_VERSION}\n${channelNote}`)
+      .digest("hex");
 
     if (
       existing.exists &&
@@ -655,7 +661,7 @@ export const importChannelPdfWorkOrder = onCall(
               "- workOrderNumber: document/work-order/job number if present",
               "- notes: short plumber-facing summary of installation details, access notes, equipment, or special instructions from the PDF, plus any relevant Teams channel notes. Do not paste the raw PDF. Keep it concise.",
               "- confidence: 0 to 1 for how complete and certain the extraction is",
-              "Read scheduling information wherever it appears: labeled Notes, Comments, Special Instructions, Requested Date/Time, and Teams post/reply text. <channel-note> contains the Teams post plus replies for this job. Treat a clearly stated requested, booked, or rescheduled date/time in those notes/replies as the scheduling source of truth and extract it into appointmentDate/appointmentTime. Also fold useful thread details into notes.",
+              "STRICT SCHEDULING RULE: only extract appointmentDate/appointmentTime from explicit scheduling instructions in PDF Notes, Comments, Special Instructions, or dated Teams post/reply notes. Never use work-order received, created, issued, printed, invoice, or document dates. When chronological notes conflict, the latest dated note that explicitly requests, books, or reschedules service wins. Otherwise leave both fields empty. Also fold useful thread details into notes.",
             ].join(" "),
           },
           {
@@ -981,10 +987,25 @@ export const processTeamsChannelImport = onDocumentCreated(
             token,
             `/teams/${teamId}/channels/${channelId}/messages/${post.id}/replies?$top=50`
           ).catch(() => ({ value: [] }));
+          const formatThreadEntry = (item: TeamsBatchMessage, kind: string) => {
+            const timestamp = item.createdDateTime
+              ? new Date(item.createdDateTime).toISOString()
+              : "unknown timestamp";
+            const author = item.from?.user?.displayName || "Unknown";
+            const body = stripTeamsHtml(item.body?.content);
+            return body ? `[${timestamp} · ${author} · ${kind}] ${body}` : "";
+          };
+          const chronologicalReplies = [...replies.value].sort(
+            (left, right) =>
+              new Date(left.createdDateTime).getTime() -
+              new Date(right.createdDateTime).getTime()
+          );
           const thread = [
             post.subject ? `Post title: ${post.subject}` : "",
-            stripTeamsHtml(post.body?.content),
-            ...replies.value.map((reply) => stripTeamsHtml(reply.body?.content)),
+            formatThreadEntry(post, "post"),
+            ...chronologicalReplies.map((reply) =>
+              formatThreadEntry(reply, "reply")
+            ),
           ]
             .filter(Boolean)
             .join("\n\n");
@@ -992,7 +1013,9 @@ export const processTeamsChannelImport = onDocumentCreated(
           const recordId = channelAttachmentWorkOrderId(post.id, attachmentId);
           const recordRef = db.collection("workOrders").doc(recordId);
           const existing = await recordRef.get();
-          const threadHash = createHash("sha256").update(thread).digest("hex");
+          const threadHash = createHash("sha256")
+            .update(`${WORK_ORDER_EXTRACTION_VERSION}\n${thread}`)
+            .digest("hex");
           if (
             existing.exists &&
             asTrimmedString(existing.data()?.teamsThreadHash) === threadHash
