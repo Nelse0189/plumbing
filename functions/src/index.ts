@@ -969,11 +969,11 @@ export const processTeamsChannelImport = onDocumentCreated(
       let imported = 0;
       let cached = 0;
       let failed = 0;
-      for (const { post, attachment } of jobs) {
-        const currentRun = await runRef.get();
-        if (asTrimmedString(currentRun.data()?.status) === "canceled") {
-          return;
-        }
+      const parallelism = 3;
+      const processJob = async ({
+        post,
+        attachment,
+      }: (typeof jobs)[number]): Promise<"imported" | "cached" | "failed"> => {
         try {
           const replies = await graphBatchFetch<{ value: TeamsBatchMessage[] }>(
             token,
@@ -995,37 +995,54 @@ export const processTeamsChannelImport = onDocumentCreated(
             existing.exists &&
             asTrimmedString(existing.data()?.teamsThreadHash) === threadHash
           ) {
-            cached += 1;
-          } else {
-            const pdf = await downloadTeamsPdf(token, asTrimmedString(attachment.contentUrl));
-            const text = await extractPdfTextOnServer(pdf);
-            const extracted = await extractBackgroundWorkOrder(
-              text,
-              asTrimmedString(attachment.name) || "work-order.pdf",
-              thread
-            );
-            await recordRef.set(
-              {
-                ...extracted,
-                teamsTeamId: teamId,
-                teamsChannelId: channelId,
-                teamsMessageId: post.id,
-                teamsAttachmentId: attachmentId,
-                teamsThreadHash: threadHash,
-                autoImported: true,
-                status: workOrderIsDispatchReady(extracted) ? "unscheduled" : "needs_review",
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                ...(existing.exists
-                  ? {}
-                  : { createdAt: admin.firestore.FieldValue.serverTimestamp() }),
-              },
-              { merge: true }
-            );
-            imported += 1;
+            return "cached";
           }
+
+          // The model receives only this extracted text and the thread text;
+          // PDF bytes are used locally only to obtain that text.
+          const pdf = await downloadTeamsPdf(token, asTrimmedString(attachment.contentUrl));
+          const text = await extractPdfTextOnServer(pdf);
+          const extracted = await extractBackgroundWorkOrder(
+            text,
+            asTrimmedString(attachment.name) || "work-order.pdf",
+            thread
+          );
+          await recordRef.set(
+            {
+              ...extracted,
+              teamsTeamId: teamId,
+              teamsChannelId: channelId,
+              teamsMessageId: post.id,
+              teamsAttachmentId: attachmentId,
+              teamsThreadHash: threadHash,
+              autoImported: true,
+              status: workOrderIsDispatchReady(extracted) ? "unscheduled" : "needs_review",
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              ...(existing.exists
+                ? {}
+                : { createdAt: admin.firestore.FieldValue.serverTimestamp() }),
+            },
+            { merge: true }
+          );
+          return "imported";
         } catch (error) {
           console.error(`Background import failed for ${post.id}:`, error);
-          failed += 1;
+          return "failed";
+        }
+      };
+
+      for (let index = 0; index < jobs.length; index += parallelism) {
+        const currentRun = await runRef.get();
+        if (asTrimmedString(currentRun.data()?.status) === "canceled") {
+          return;
+        }
+        const results = await Promise.all(
+          jobs.slice(index, index + parallelism).map(processJob)
+        );
+        for (const result of results) {
+          if (result === "imported") imported += 1;
+          else if (result === "cached") cached += 1;
+          else failed += 1;
         }
         await updateRun({
           status: "processing",
