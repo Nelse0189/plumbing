@@ -171,13 +171,13 @@ const workOrderExtractionInstructions = [
   "Return empty strings for unknown fields.",
   "customerName: full customer or contact name only. phone: primary US customer phone normalized to +1XXXXXXXXXX. address: full service address. jobType: short installation/service label.",
   "appointmentDate: requested/install date as YYYY-MM-DD. appointmentTime: requested time as HH:MM 24-hour, otherwise empty.",
-  "notes: concise plumber-facing summary of actionable installation/access/equipment/permit/customer instructions and relevant Teams reply updates. Never copy generic sales-order boilerplate, legal terms, confirmation instructions, warranty language, marketing, pricing disclaimers, or customer email/text scripts.",
+  "notes: use ONLY actionable information from Teams thread entries marked reply (plumber/customer reply updates). Do not use PDF text, original post text, sales-order text, or generic boilerplate for notes. If there are no actionable replies, return an empty notes string.",
   "STRICT SCHEDULING RULE: appointmentDate and appointmentTime may only come from an explicit scheduling instruction in PDF Notes, Comments, Special Instructions, or dated Teams post/reply notes. Never use a work-order received, created, issued, printed, invoice, or document date as the schedule date.",
   "Thread entries contain timestamps and are chronological. If multiple scheduling instructions conflict, the latest dated note that explicitly requests, books, or reschedules service wins. If no explicit scheduling instruction exists in those Notes/comments/thread entries, return empty appointmentDate and appointmentTime.",
 ].join(" ");
 
 // Bump this when scheduling rules change so cached work orders are refreshed.
-const WORK_ORDER_EXTRACTION_VERSION = "scheduling-notes-v4";
+const WORK_ORDER_EXTRACTION_VERSION = "thread-replies-only-notes-v5";
 
 async function extractBackgroundWorkOrder(
   text: string,
@@ -417,9 +417,9 @@ export const extractWorkOrder = onCall(
               "- appointmentDate: requested/install date as YYYY-MM-DD when a date is present",
               "- appointmentTime: requested time as HH:MM 24-hour when a time is present; otherwise empty",
               "- workOrderNumber: document/work-order/job number if present",
-              "- notes: short plumber-facing summary of installation details, access notes, equipment, or special instructions from the PDF, plus any relevant Teams channel notes. Do not paste the raw PDF. Keep it concise.",
+              "- notes: use ONLY actionable Teams reply-thread information. Never use PDF text, original post text, sales-order text, or boilerplate. If no relevant reply exists, return an empty string.",
               "- confidence: 0 to 1 for how complete and certain the extraction is",
-              "STRICT SCHEDULING RULE: only extract appointmentDate/appointmentTime from explicit scheduling instructions in Notes, Comments, Special Instructions, or chronological Teams post/reply notes. Never use work-order received, created, issued, printed, invoice, or document dates. When dated scheduling notes conflict, the latest note that explicitly requests, books, or reschedules service wins. Otherwise leave both fields empty. Notes must contain only actionable plumber information; omit generic sales-order boilerplate, legal terms, customer confirmation instructions, and marketing.",
+              "STRICT SCHEDULING RULE: only extract appointmentDate/appointmentTime from explicit scheduling instructions in Notes, Comments, Special Instructions, or chronological Teams post/reply notes. Never use work-order received, created, issued, printed, invoice, or document dates. When dated scheduling notes conflict, the latest note that explicitly requests, books, or reschedules service wins. Otherwise leave both fields empty.",
             ].join(" "),
           },
           {
@@ -663,9 +663,9 @@ export const importChannelPdfWorkOrder = onCall(
               "- appointmentDate: requested/install date as YYYY-MM-DD when a date is present",
               "- appointmentTime: requested time as HH:MM 24-hour when a time is present; otherwise empty",
               "- workOrderNumber: document/work-order/job number if present",
-              "- notes: short plumber-facing summary of installation details, access notes, equipment, or special instructions from the PDF, plus any relevant Teams channel notes. Do not paste the raw PDF. Keep it concise.",
+              "- notes: use ONLY actionable Teams reply-thread information. Never use PDF text, original post text, sales-order text, or boilerplate. If no relevant reply exists, return an empty string.",
               "- confidence: 0 to 1 for how complete and certain the extraction is",
-              "STRICT SCHEDULING RULE: only extract appointmentDate/appointmentTime from explicit scheduling instructions in PDF Notes, Comments, Special Instructions, or dated Teams post/reply notes. Never use work-order received, created, issued, printed, invoice, or document dates. When chronological notes conflict, the latest dated note that explicitly requests, books, or reschedules service wins. Otherwise leave both fields empty. Notes must include only actionable plumber details from the thread; omit generic sales-order boilerplate, legal terms, customer confirmation instructions, and marketing.",
+              "STRICT SCHEDULING RULE: only extract appointmentDate/appointmentTime from explicit scheduling instructions in PDF Notes, Comments, Special Instructions, or dated Teams post/reply notes. Never use work-order received, created, issued, printed, invoice, or document dates. When chronological notes conflict, the latest dated note that explicitly requests, books, or reschedules service wins. Otherwise leave both fields empty.",
             ].join(" "),
           },
           {
