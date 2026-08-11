@@ -131,7 +131,10 @@ function App() {
 
       <main>
         {viewMode === 'dispatch' ? (
-          <DispatchBoard selectedDate={selectedDate} />
+          <DispatchBoard
+            selectedDate={selectedDate}
+            onSelectDate={setSelectedDate}
+          />
         ) : loading ? (
           <div style={{
             padding: '2rem',

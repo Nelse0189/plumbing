@@ -228,6 +228,30 @@ export async function getDispatchPlan(date: string): Promise<DispatchPlan> {
   return mergeWorkOrdersIntoPlan(plan, workOrders);
 }
 
+export interface DispatchDaySummary {
+  date: string;
+  readyCount: number;
+  notReadyCount: number;
+  scheduledTruckCount: number;
+  scheduledStopCount: number;
+}
+
+/** Lightweight day overview for the multi-day dispatch strip. */
+export async function getDispatchDaySummary(date: string): Promise<DispatchDaySummary> {
+  const plan = await getDispatchPlan(date);
+  const scheduledTrucks = plan.trucks.filter((truck) => truck.stops.length > 0);
+  return {
+    date,
+    readyCount: plan.unassigned.length,
+    notReadyCount: plan.notReady.length,
+    scheduledTruckCount: scheduledTrucks.length,
+    scheduledStopCount: scheduledTrucks.reduce(
+      (count, truck) => count + truck.stops.length,
+      0
+    ),
+  };
+}
+
 /**
  * Live-updates the dispatch plan (including voice call status written by Twilio
  * webhooks) without requiring a manual page reload.

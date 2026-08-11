@@ -8,9 +8,11 @@ import {
   closeDispatchJob,
   createMockDispatchJob,
   deleteDispatchJob,
+  getDispatchDaySummary,
   queueMorningTextsForTruck,
   saveDispatchPlan,
   subscribeDispatchPlan,
+  type DispatchDaySummary,
 } from '../services/dispatchService';
 import {
   applyDefaultWindows,
@@ -27,6 +29,7 @@ import './DispatchBoard.css';
 
 interface DispatchBoardProps {
   selectedDate: string;
+  onSelectDate: (date: string) => void;
 }
 
 type DragPayload =
@@ -40,6 +43,21 @@ function parseDrag(data: string): DragPayload | null {
   } catch {
     return null;
   }
+}
+
+function addDaysToIsoDate(date: string, offset: number): string {
+  const [year, month, day] = date.split('-').map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day + offset));
+  return next.toISOString().slice(0, 10);
+}
+
+function formatDispatchDay(date: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  }).format(new Date(`${date}T00:00:00Z`));
 }
 
 function formatVoiceConfirmationLabel(stop: DispatchStop): string {
@@ -307,7 +325,10 @@ function StopNode({
   );
 }
 
-export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
+export default function DispatchBoard({
+  selectedDate,
+  onSelectDate,
+}: DispatchBoardProps) {
   const [plan, setPlan] = useState<DispatchPlan | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -315,6 +336,7 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
   const [error, setError] = useState<string | null>(null);
   const [importProgress, setImportProgress] =
     useState<WorkOrderImportProgress | null>(null);
+  const [daySummaries, setDaySummaries] = useState<DispatchDaySummary[]>([]);
   const [cancelingImport, setCancelingImport] = useState(false);
   const [callingStopId, setCallingStopId] = useState<string | null>(null);
   const [closingStopId, setClosingStopId] = useState<string | null>(null);
@@ -360,6 +382,27 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
       unsubscribe();
     };
   }, [selectedDate, boardEpoch]);
+
+  const visibleDispatchDates = useMemo(
+    () => Array.from({ length: 7 }, (_, index) => addDaysToIsoDate(selectedDate, index - 2)),
+    [selectedDate]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all(visibleDispatchDates.map(getDispatchDaySummary))
+      .then((summaries) => {
+        if (!cancelled) setDaySummaries(summaries);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visibleDispatchDates]);
 
   useEffect(() => {
     return subscribeLatestWorkOrderImportProgress(
@@ -708,6 +751,35 @@ export default function DispatchBoard({ selectedDate }: DispatchBoardProps) {
           </span>
         </div>
       </div>
+
+      <section className="dispatch-board__days" aria-label="Dispatch day overview">
+        {visibleDispatchDates.map((date) => {
+          const summary = daySummaries.find((item) => item.date === date);
+          return (
+            <button
+              key={date}
+              type="button"
+              className={`dispatch-board__day ${
+                date === selectedDate ? 'dispatch-board__day--selected' : ''
+              }`}
+              onClick={() => onSelectDate(date)}
+            >
+              <strong>{formatDispatchDay(date)}</strong>
+              <span>{summary ? `${summary.readyCount} ready` : 'Loading…'}</span>
+              <span>
+                {summary
+                  ? `${summary.scheduledTruckCount} truck${
+                      summary.scheduledTruckCount === 1 ? '' : 's'
+                    } · ${summary.scheduledStopCount} stops`
+                  : ' '}
+              </span>
+              {summary?.notReadyCount ? (
+                <small>{summary.notReadyCount} not ready</small>
+              ) : null}
+            </button>
+          );
+        })}
+      </section>
 
       {error && <div className="dispatch-board__error">{error}</div>}
       {status && <div className="dispatch-board__status">{status}</div>}

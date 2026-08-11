@@ -38,6 +38,49 @@
   font-size: 0.8rem;
 }
 
+.dispatch-board__days {
+  display: flex;
+  gap: 0.6rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+}
+
+.dispatch-board__day {
+  display: grid;
+  flex: 0 0 9.5rem;
+  gap: 0.2rem;
+  padding: 0.65rem 0.75rem;
+  border-color: var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  text-align: left;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.dispatch-board__day:hover {
+  border-color: var(--accent);
+}
+
+.dispatch-board__day--selected {
+  border-color: var(--accent);
+  background: rgba(216, 178, 79, 0.12);
+}
+
+.dispatch-board__day strong {
+  color: var(--text-primary);
+  font-size: 0.82rem;
+}
+
+.dispatch-board__day span:first-of-type {
+  color: var(--success);
+}
+
+.dispatch-board__day small {
+  color: var(--error);
+  font-size: 0.68rem;
+}
+
 .dispatch-board__error,
 .dispatch-board__status {
   padding: 0.65rem 0.85rem;
