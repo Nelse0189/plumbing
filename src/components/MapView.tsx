@@ -1,6 +1,13 @@
-import { useMemo } from 'react';
-import { GoogleMap, LoadScript, Marker } from '@react-google-maps/api';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  DirectionsRenderer,
+  DirectionsService,
+  GoogleMap,
+  LoadScript,
+  Marker,
+} from '@react-google-maps/api';
 import type { Truck } from '../types';
+import { DEFAULT_DISPATCH_ORIGIN } from '../utils/dispatchWindows';
 
 interface MapViewProps {
   trucks: Truck[];
@@ -13,11 +20,15 @@ const containerStyle = {
 };
 
 const defaultCenter = {
-  lat: 40.7128,
-  lng: -74.0060,
+  lat: 41.6215,
+  lng: -72.7272,
 };
 
 export default function MapView({ trucks, selectedDate }: MapViewProps) {
+  const [directions, setDirections] = useState<
+    Record<string, google.maps.DirectionsResult>
+  >({});
+
   const allStops = useMemo(() => {
     return trucks.flatMap(truck =>
       truck.stops.map(stop => ({
@@ -40,6 +51,32 @@ export default function MapView({ trucks, selectedDate }: MapViewProps) {
       return null;
     }).filter(Boolean);
   }, [allStops]);
+
+  const truckRoutes = useMemo(
+    () =>
+      trucks
+        .map((truck, index) => ({
+          ...truck,
+          color: ['#d8b24f', '#7eaa92', '#78a9d4', '#d67a90', '#bd9ee8'][index % 5],
+          stops: truck.stops
+            .filter((stop) => Boolean(stop.address?.trim()))
+            .slice(0, 25),
+        }))
+        .filter((truck) => truck.stops.length > 0),
+    [trucks]
+  );
+
+  const routeKey = useMemo(
+    () =>
+      truckRoutes
+        .map((truck) => `${truck.id}:${truck.stops.map((stop) => stop.address).join('|')}`)
+        .join(';'),
+    [truckRoutes]
+  );
+
+  useEffect(() => {
+    setDirections({});
+  }, [routeKey]);
 
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
@@ -113,6 +150,50 @@ export default function MapView({ trucks, selectedDate }: MapViewProps) {
               zoomControl: true,
             }}
           >
+            <Marker position={defaultCenter} title={`Depot: ${DEFAULT_DISPATCH_ORIGIN}`} />
+            {truckRoutes.map((truck) => {
+              const lastStop = truck.stops[truck.stops.length - 1];
+              const waypoints = truck.stops.slice(0, -1).map((stop) => ({
+                location: stop.address,
+                stopover: true,
+              }));
+
+              return !directions[truck.id] ? (
+                <DirectionsService
+                  key={`${truck.id}-${routeKey}`}
+                  options={{
+                    origin: DEFAULT_DISPATCH_ORIGIN,
+                    destination: lastStop.address,
+                    waypoints,
+                    travelMode: 'DRIVING' as google.maps.TravelMode,
+                    optimizeWaypoints: false,
+                  }}
+                  callback={(result, status) => {
+                    if (status === 'OK' && result) {
+                      setDirections((current) =>
+                        current[truck.id]
+                          ? current
+                          : { ...current, [truck.id]: result }
+                      );
+                    }
+                  }}
+                />
+              ) : (
+                <DirectionsRenderer
+                  key={`${truck.id}-route`}
+                  directions={directions[truck.id]}
+                  options={{
+                    suppressMarkers: true,
+                    preserveViewport: false,
+                    polylineOptions: {
+                      strokeColor: truck.color,
+                      strokeOpacity: 0.85,
+                      strokeWeight: 5,
+                    },
+                  }}
+                />
+              );
+            })}
             {markers.map((marker, index) => (
               marker && (
                 <Marker
@@ -131,7 +212,14 @@ export default function MapView({ trucks, selectedDate }: MapViewProps) {
           <p>No stops scheduled for this date</p>
         ) : (
           <p>
-            Showing {allStops.length} stop{allStops.length !== 1 ? 's' : ''} across {trucks.length} truck{trucks.length !== 1 ? 's' : ''}
+            Showing {allStops.length} stop{allStops.length !== 1 ? 's' : ''} across {trucks.length} truck{trucks.length !== 1 ? 's' : ''}. Routes start at{' '}
+            {DEFAULT_DISPATCH_ORIGIN}.
+          </p>
+        )}
+        {truckRoutes.length > 0 && (
+          <p style={{ marginTop: '0.5rem' }}>
+            Colored lines show each truck’s stop order. Routes use the order on the
+            schedule and do not automatically reorder stops.
           </p>
         )}
         {allStops.some(s => !s.lat || !s.lng) && (

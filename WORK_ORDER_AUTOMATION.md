@@ -103,7 +103,7 @@ The main app **Dispatch** tab is a 5-truck Connecticut day board:
 1. Work orders for the selected date appear as **Not Ready** (no notes on the
    PDF/doc) or **Ready / Unassigned** (notes present).
 2. Drag jobs onto trucks and reorder stops. Default route order is farthest from
-   the depot (`DISPATCH_ORIGIN_ADDRESS`, default `216 Berlin Lane, Berlin, CT`)
+   the depot (`DISPATCH_ORIGIN_ADDRESS`, default `216 Christian Lane, Berlin, CT`)
    first; higher **Priority** overrides distance.
 3. Default arrival windows by stop position (plumber can edit any window):
    - 1st: 8 AM–12 PM
@@ -131,7 +131,7 @@ use the work order's verified phone number only, and review the voice script.
 Frontend optional vars (`.env.local`):
 
 ```env
-VITE_DISPATCH_ORIGIN_ADDRESS=216 Berlin Lane, Berlin, CT
+VITE_DISPATCH_ORIGIN_ADDRESS=216 Christian Lane, Berlin, CT
 VITE_DISPATCH_MORNING_HOUR=7
 VITE_GOOGLE_MAPS_API_KEY=...
 ```

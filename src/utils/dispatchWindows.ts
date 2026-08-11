@@ -40,7 +40,7 @@ export const DISPATCH_TRUCK_COUNT = 5;
 
 export const DEFAULT_DISPATCH_ORIGIN =
   import.meta.env.VITE_DISPATCH_ORIGIN_ADDRESS?.trim() ||
-  '216 Berlin Lane, Berlin, CT';
+  '216 Christian Lane, Berlin, CT';
 
 export function createEmptyDispatchTrucks() {
   return Array.from({ length: DISPATCH_TRUCK_COUNT }, (_, index) => ({

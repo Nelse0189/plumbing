@@ -44,7 +44,7 @@ const strSmsTestRecipient = defineString("SMS_TEST_RECIPIENT", {
 });
 const strCompanyName = defineString("COMPANY_NAME", { default: "Your plumbing company" });
 const strDispatchOriginAddress = defineString("DISPATCH_ORIGIN_ADDRESS", {
-  default: "216 Berlin Lane, Berlin, CT",
+  default: "216 Christian Lane, Berlin, CT",
 });
 const strDispatchMorningHour = defineString("DISPATCH_MORNING_HOUR", {
   default: "7",
