@@ -172,12 +172,22 @@ const workOrderExtractionInstructions = [
   "customerName: full customer or contact name only. phone: primary US customer phone normalized to +1XXXXXXXXXX. address: full service address. jobType: short installation/service label.",
   "appointmentDate: requested/install date as YYYY-MM-DD. appointmentTime: requested time as HH:MM 24-hour, otherwise empty.",
   "notes: use ONLY actionable information from Teams thread entries marked reply (plumber/customer reply updates). Do not use PDF text, original post text, sales-order text, or generic boilerplate for notes. If there are no actionable replies, return an empty notes string.",
-  "STRICT SCHEDULING RULE: appointmentDate and appointmentTime may only come from an explicit scheduling instruction in PDF Notes, Comments, Special Instructions, or dated Teams post/reply notes. Never use a work-order received, created, issued, printed, invoice, or document date as the schedule date.",
-  "Thread entries contain timestamps and are chronological. If multiple scheduling instructions conflict, the latest dated note that explicitly requests, books, or reschedules service wins. If no explicit scheduling instruction exists in those Notes/comments/thread entries, return empty appointmentDate and appointmentTime.",
+  "ABSOLUTE SCHEDULING SOURCE RULE: appointmentDate and appointmentTime may ONLY come from the timestamped <thread-replies> section. Never derive scheduling from work-order/PDF text, even if it contains dates, notes, requested dates, received dates, created dates, invoice dates, or document dates.",
+  "Thread replies are chronological. If multiple scheduling instructions conflict, the latest reply that explicitly requests, books, or reschedules service wins. If no reply explicitly schedules service, return empty appointmentDate and appointmentTime.",
 ].join(" ");
 
 // Bump this when scheduling rules change so cached work orders are refreshed.
-const WORK_ORDER_EXTRACTION_VERSION = "thread-replies-only-notes-v5";
+const WORK_ORDER_EXTRACTION_VERSION = "thread-only-scheduling-v6";
+
+function maskPdfDatesForScheduling(text: string): string {
+  return text
+    .replace(/\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b/g, "[PDF_DATE]")
+    .replace(/\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/g, "[PDF_DATE]")
+    .replace(
+      /\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:,\s*\d{4})?\b/gi,
+      "[PDF_DATE]"
+    );
+}
 
 async function extractBackgroundWorkOrder(
   text: string,
@@ -200,15 +210,14 @@ async function extractBackgroundWorkOrder(
       {
         role: "user",
         content: [
-          `<work-order-text sourceFileName="${sourceFileName.replace(/"/g, "")}">\n${text.replace(
-            /<\/?work-order(?:-text)?>/gi,
-            ""
+          `<work-order-text sourceFileName="${sourceFileName.replace(/"/g, "")}">\n${maskPdfDatesForScheduling(
+            text.replace(/<\/?work-order(?:-text)?>/gi, "")
           )}\n</work-order-text>`,
           channelNote
-            ? `<channel-note>\n${channelNote.replace(
-                /<\/?channel-note>/gi,
+            ? `<thread-replies>\n${channelNote.replace(
+                /<\/?(?:channel-note|thread-replies)>/gi,
                 ""
-              )}\n</channel-note>`
+              )}\n</thread-replies>`
             : "",
         ]
           .filter(Boolean)
@@ -419,7 +428,7 @@ export const extractWorkOrder = onCall(
               "- workOrderNumber: document/work-order/job number if present",
               "- notes: use ONLY actionable Teams reply-thread information. Never use PDF text, original post text, sales-order text, or boilerplate. If no relevant reply exists, return an empty string.",
               "- confidence: 0 to 1 for how complete and certain the extraction is",
-              "STRICT SCHEDULING RULE: only extract appointmentDate/appointmentTime from explicit scheduling instructions in Notes, Comments, Special Instructions, or chronological Teams post/reply notes. Never use work-order received, created, issued, printed, invoice, or document dates. When dated scheduling notes conflict, the latest note that explicitly requests, books, or reschedules service wins. Otherwise leave both fields empty.",
+              "ABSOLUTE SCHEDULING SOURCE RULE: appointmentDate/appointmentTime may ONLY come from timestamped <thread-replies>. Never derive scheduling from PDF/work-order text. If no reply explicitly schedules service, leave both fields empty.",
             ].join(" "),
           },
           {
@@ -665,7 +674,7 @@ export const importChannelPdfWorkOrder = onCall(
               "- workOrderNumber: document/work-order/job number if present",
               "- notes: use ONLY actionable Teams reply-thread information. Never use PDF text, original post text, sales-order text, or boilerplate. If no relevant reply exists, return an empty string.",
               "- confidence: 0 to 1 for how complete and certain the extraction is",
-              "STRICT SCHEDULING RULE: only extract appointmentDate/appointmentTime from explicit scheduling instructions in PDF Notes, Comments, Special Instructions, or dated Teams post/reply notes. Never use work-order received, created, issued, printed, invoice, or document dates. When chronological notes conflict, the latest dated note that explicitly requests, books, or reschedules service wins. Otherwise leave both fields empty.",
+              "ABSOLUTE SCHEDULING SOURCE RULE: appointmentDate/appointmentTime may ONLY come from timestamped <thread-replies>. Never derive scheduling from PDF/work-order text. If no reply explicitly schedules service, leave both fields empty.",
             ].join(" "),
           },
           {
@@ -990,13 +999,8 @@ export const processTeamsChannelImport = onDocumentCreated(
               new Date(left.createdDateTime).getTime() -
               new Date(right.createdDateTime).getTime()
           );
-          const thread = [
-            post.subject ? `Post title: ${post.subject}` : "",
-            formatThreadEntry(post, "post"),
-            ...chronologicalReplies.map((reply) =>
-              formatThreadEntry(reply, "reply")
-            ),
-          ]
+          const threadReplies = chronologicalReplies
+            .map((reply) => formatThreadEntry(reply, "reply"))
             .filter(Boolean)
             .join("\n\n");
           const attachmentId = asTrimmedString(attachment.id);
@@ -1004,7 +1008,7 @@ export const processTeamsChannelImport = onDocumentCreated(
           const recordRef = db.collection("workOrders").doc(recordId);
           const existing = await recordRef.get();
           const threadHash = createHash("sha256")
-            .update(`${WORK_ORDER_EXTRACTION_VERSION}\n${thread}`)
+            .update(`${WORK_ORDER_EXTRACTION_VERSION}\n${threadReplies}`)
             .digest("hex");
           if (
             existing.exists &&
@@ -1020,7 +1024,7 @@ export const processTeamsChannelImport = onDocumentCreated(
           const extracted = await extractBackgroundWorkOrder(
             text,
             asTrimmedString(attachment.name) || "work-order.pdf",
-            thread
+            threadReplies
           );
           await recordRef.set(
             {
