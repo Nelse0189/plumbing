@@ -87,64 +87,19 @@ function formatChannelNoteLine(
   return `${isReply ? 'Reply — ' : ''}[${stamp} · ${from}] ${body}`;
 }
 
-function messageThreadText(message: GraphMessage) {
-  return [
-    message.subject?.trim(),
-    stripHtml(message.body?.content ?? '').trim(),
-    ...(message.replies || []).map((reply) =>
-      stripHtml(reply.body?.content ?? '').trim()
-    ),
-  ]
-    .filter(Boolean)
-    .join('\n');
-}
-
-/** Message post/replies on the PDF thread, plus related posts and their replies. */
+/** Only replies directly underneath the PDF work-order post become job notes. */
 function collectChannelNotesForWorkOrder(
   channelMessages: GraphMessage[],
-  sourceMessageId: string,
-  workOrder?: Pick<WorkOrder, 'workOrderNumber' | 'customerName' | 'address'>
+  sourceMessageId: string
 ): string {
-  const lines: string[] = [];
-  const seen = new Set<string>();
-  const workOrderNumber = workOrder?.workOrderNumber?.trim().toLowerCase() || '';
-  const customerName = workOrder?.customerName?.trim().toLowerCase() || '';
-  const address = workOrder?.address?.trim().toLowerCase() || '';
-  const addressToken =
-    address.length >= 8 ? address.split(',')[0]?.trim() || address.slice(0, 24) : '';
-
-  for (const message of channelMessages) {
-    const body = stripHtml(message.body?.content ?? '').trim();
-    const threadText = messageThreadText(message);
-    if (!threadText || seen.has(message.id)) continue;
-
-    const haystack = threadText.toLowerCase();
-    const isSource = message.id === sourceMessageId;
-    const matchesWorkOrder =
-      workOrderNumber.length >= 3 && haystack.includes(workOrderNumber);
-    const matchesCustomer =
-      customerName.length >= 3 && haystack.includes(customerName);
-    const matchesAddress =
-      addressToken.length >= 5 && haystack.includes(addressToken);
-
-    if (isSource || matchesWorkOrder || matchesCustomer || matchesAddress) {
-      seen.add(message.id);
-      if (message.subject?.trim()) {
-        lines.push(`Post title: ${message.subject.trim()}`);
-      }
-      if (body) {
-        lines.push(formatChannelNoteLine(message, body));
-      }
-      for (const reply of message.replies || []) {
-        const replyBody = stripHtml(reply.body?.content ?? '').trim();
-        if (replyBody) {
-          lines.push(formatChannelNoteLine(reply, replyBody, true));
-        }
-      }
-    }
-  }
-
-  return lines.join('\n\n');
+  const post = channelMessages.find((message) => message.id === sourceMessageId);
+  return (post?.replies || [])
+    .map((reply) => {
+      const body = stripHtml(reply.body?.content ?? '').trim();
+      return body ? formatChannelNoteLine(reply, body, true) : '';
+    })
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 function mergeWorkOrderNotes(aiNotes: string, _channelNotes: string) {
@@ -407,8 +362,7 @@ function TeamsGraphTestApp() {
 
         const relatedChannelNotes = collectChannelNotesForWorkOrder(
           channelMessages,
-          messageId,
-          imported.workOrder
+          messageId
         );
         const workOrder: WorkOrder = {
           ...imported.workOrder,

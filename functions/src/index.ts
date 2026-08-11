@@ -177,7 +177,7 @@ const workOrderExtractionInstructions = [
 ].join(" ");
 
 // Bump this when scheduling rules change so cached work orders are refreshed.
-const WORK_ORDER_EXTRACTION_VERSION = "thread-only-scheduling-v6";
+const WORK_ORDER_EXTRACTION_VERSION = "thread-replies-verbatim-notes-v7";
 
 function maskPdfDatesForScheduling(text: string): string {
   return text
@@ -231,7 +231,11 @@ async function extractBackgroundWorkOrder(
   });
   const content = result.choices[0]?.message.content;
   if (!content) throw new Error("OpenAI returned an empty response");
-  return normalizeWorkOrder(parseJsonObject(content), sourceFileName);
+  return {
+    ...normalizeWorkOrder(parseJsonObject(content), sourceFileName),
+    // Notes are deliberately a direct copy of this work order's replies.
+    notes: channelNote.trim(),
+  };
 }
 
 function asTrimmedString(value: unknown): string {
@@ -737,6 +741,11 @@ export const importChannelPdfWorkOrder = onCall(
         throw new Error("OpenAI returned an empty response");
       }
       extracted = normalizeWorkOrder(parseJsonObject(content), sourceFileName);
+      extracted = {
+        ...extracted,
+        // Keep only replies directly under this work order, without AI/PDF notes.
+        notes: channelNote.trim(),
+      };
     } catch (error) {
       console.error("Automatic channel PDF import failed:", error);
       throw new HttpsError("internal", "Failed to import the channel PDF work order");
