@@ -901,7 +901,7 @@ export const processTeamsChannelImport = onDocumentCreated(
     document: "workOrderImportTasks/{runId}",
     region: "us-central1",
     timeoutSeconds: 540,
-    memory: "1GiB",
+    memory: "2GiB",
   },
   async (event) => {
     const runId = event.params.runId;
@@ -969,7 +969,9 @@ export const processTeamsChannelImport = onDocumentCreated(
       let imported = 0;
       let cached = 0;
       let failed = 0;
-      const parallelism = 3;
+      // Each request carries one PDF's extracted text plus its thread. Keep
+      // outputs one-work-order-per-call, but overlap network and model latency.
+      const parallelism = 6;
       const processJob = async ({
         post,
         attachment,
