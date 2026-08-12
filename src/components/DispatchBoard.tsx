@@ -1,0 +1,990 @@
+import { useEffect, useMemo, useState, type DragEvent } from 'react';
+import { createPortal } from 'react-dom';
+import type { DispatchPlan, DispatchStop, DispatchTruck } from '../types';
+import {
+  autoOrderAllUnsetTrucks,
+  autoOrderTruckStops,
+  cancelMorningTextsForTruck,
+  closeDispatchJob,
+  createMockDispatchJob,
+  deleteDispatchJob,
+  getDispatchDaySummary,
+  queueMorningTextsForTruck,
+  saveDispatchPlan,
+  subscribeDispatchPlan,
+  type DispatchDaySummary,
+} from '../services/dispatchService';
+import {
+  applyDefaultWindows,
+  DEFAULT_DISPATCH_ORIGIN,
+  formatWindowLabel,
+} from '../utils/dispatchWindows';
+import { initiateVoiceWindowConfirmation } from '../services/voiceConfirmationService';
+import {
+  cancelWorkOrderImport,
+  subscribeLatestWorkOrderImportProgress,
+  type WorkOrderImportProgress,
+} from '../services/importProgressService';
+import './DispatchBoard.css';
+
+interface DispatchBoardProps {
+  selectedDate: string;
+  onSelectDate: (date: string) => void;
+}
+
+type DragPayload =
+  | { from: 'unassigned'; stopId: string }
+  | { from: 'notReady'; stopId: string }
+  | { from: 'truck'; truckId: string; stopId: string; index: number };
+
+function parseDrag(data: string): DragPayload | null {
+  try {
+    return JSON.parse(data) as DragPayload;
+  } catch {
+    return null;
+  }
+}
+
+function addDaysToIsoDate(date: string, offset: number): string {
+  const [year, month, day] = date.split('-').map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day + offset));
+  return next.toISOString().slice(0, 10);
+}
+
+function formatDispatchDay(date: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  }).format(new Date(`${date}T00:00:00Z`));
+}
+
+function formatVoiceConfirmationLabel(stop: DispatchStop): string {
+  const responseLabels: Record<
+    NonNullable<DispatchStop['voiceConfirmationResponse']>,
+    string
+  > = {
+    confirmed: 'Confirmed',
+    declined: 'Declined',
+    unknown: 'No clear answer',
+    no_answer: 'No answer',
+    hung_up: 'Hung up',
+  };
+  const statusLabels: Record<NonNullable<DispatchStop['voiceCallStatus']>, string> = {
+    queued: 'Queued',
+    ringing: 'Ringing',
+    answered: 'Answered',
+    completed: 'Completed',
+    busy: 'Busy',
+    canceled: 'Canceled',
+    failed: 'Failed',
+    'no-answer': 'No answer',
+  };
+
+  const response = stop.voiceConfirmationResponse;
+  if (response && response !== 'unknown') {
+    return `Call: ${responseLabels[response]}`;
+  }
+  if (stop.voiceCallStatus) {
+    const status = statusLabels[stop.voiceCallStatus] || stop.voiceCallStatus;
+    if (response === 'unknown' && stop.voiceCallStatus === 'completed') {
+      return `Call: ${responseLabels.unknown}`;
+    }
+    return `Call: ${status}`;
+  }
+  return 'Call: unknown';
+}
+
+function StopNode({
+  stop,
+  locked,
+  onPriorityChange,
+  onWindowChange,
+  onCallConfirmation,
+  onClose,
+  onDelete,
+  closing,
+  deleting,
+  calling,
+  dragPayload,
+}: {
+  stop: DispatchStop;
+  locked: boolean;
+  onPriorityChange?: (priority: number) => void;
+  onWindowChange?: (start: string, end: string) => void;
+  onCallConfirmation?: () => void;
+  onClose?: () => void;
+  onDelete?: () => void;
+  closing?: boolean;
+  deleting?: boolean;
+  calling?: boolean;
+  dragPayload: DragPayload;
+}) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const hasNotes = Boolean(stop.notes?.trim());
+
+  useEffect(() => {
+    if (!detailsOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDetailsOpen(false);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [detailsOpen]);
+
+  return (
+    <article
+      className={`dispatch-node ${locked ? 'dispatch-node--locked' : ''}`}
+      draggable={!locked}
+      onDragStart={(event) => {
+        event.dataTransfer.setData('application/json', JSON.stringify(dragPayload));
+        event.dataTransfer.effectAllowed = 'move';
+      }}
+    >
+      <header className="dispatch-node__header">
+        <strong>{stop.workOrderNumber || 'No WO#'}</strong>
+        <span className="dispatch-node__header-actions">
+          {stop.distanceMiles != null && (
+            <span className="dispatch-node__miles">{stop.distanceMiles} mi</span>
+          )}
+          {onClose && (
+            <button
+              type="button"
+              className="dispatch-node__close"
+              disabled={closing}
+              title="Close job and retain its history"
+              aria-label={`Close job ${stop.workOrderNumber || stop.customerName || stop.id}`}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onClose();
+              }}
+            >
+              {closing ? '…' : 'Close'}
+            </button>
+          )}
+          {onDelete && (
+            <button
+              type="button"
+              className="dispatch-node__delete"
+              disabled={deleting}
+              title="Delete job"
+              aria-label={`Delete job ${stop.workOrderNumber || stop.customerName || stop.id}`}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onDelete();
+              }}
+            >
+              {deleting ? '…' : 'Delete'}
+            </button>
+          )}
+        </span>
+      </header>
+      <p className="dispatch-node__customer">{stop.customerName}</p>
+      <p className="dispatch-node__address">{stop.address || 'No address'}</p>
+      <p className="dispatch-node__meta">{stop.jobType || 'Job type TBD'}</p>
+      <div className="dispatch-node__notes-row">
+        <button
+          type="button"
+          className={`dispatch-node__notes-button ${
+            hasNotes ? '' : 'dispatch-node__notes-button--empty'
+          }`}
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setDetailsOpen(true);
+          }}
+        >
+          {hasNotes ? 'Notes & details' : 'No notes'}
+        </button>
+      </div>
+      {detailsOpen &&
+        createPortal(
+          <div
+            className="dispatch-details-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Notes for ${stop.workOrderNumber || stop.customerName || 'job'}`}
+          >
+            <div
+              className="dispatch-details-modal__backdrop"
+              onClick={() => setDetailsOpen(false)}
+            />
+            <div
+              className="dispatch-details-modal__panel"
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <header className="dispatch-details-modal__header">
+                <div>
+                  <strong>{stop.workOrderNumber || 'No WO#'}</strong>
+                  <p>{stop.customerName || 'Unknown customer'}</p>
+                </div>
+                <button
+                  type="button"
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={() => setDetailsOpen(false)}
+                >
+                  Close
+                </button>
+              </header>
+              <dl className="dispatch-details-modal__facts">
+                <div>
+                  <dt>Phone</dt>
+                  <dd>{stop.phone || '—'}</dd>
+                </div>
+                <div>
+                  <dt>Address</dt>
+                  <dd>{stop.address || '—'}</dd>
+                </div>
+                <div>
+                  <dt>Job type</dt>
+                  <dd>{stop.jobType || '—'}</dd>
+                </div>
+                <div>
+                  <dt>Window</dt>
+                  <dd>{formatWindowLabel(stop.window)}</dd>
+                </div>
+              </dl>
+              <section className="dispatch-details-modal__notes">
+                <h3>Notes</h3>
+                {hasNotes ? (
+                  <pre>{stop.notes}</pre>
+                ) : (
+                  <p className="dispatch-details-modal__empty">
+                    No notes on this work order yet.
+                  </p>
+                )}
+              </section>
+            </div>
+          </div>,
+          document.body
+        )}
+      <div className="dispatch-node__controls">
+        <label>
+          Priority
+          <input
+            type="number"
+            min={0}
+            max={99}
+            disabled={locked || !onPriorityChange}
+            value={stop.priority}
+            onChange={(event) => onPriorityChange?.(Number(event.target.value) || 0)}
+          />
+        </label>
+        {onWindowChange && (
+          <label className="dispatch-node__window">
+            Window
+            <span>
+              <input
+                type="time"
+                disabled={locked}
+                value={stop.window.start}
+                onChange={(event) => onWindowChange(event.target.value, stop.window.end)}
+              />
+              <span aria-hidden="true">–</span>
+              <input
+                type="time"
+                disabled={locked}
+                value={stop.window.end}
+                onChange={(event) => onWindowChange(stop.window.start, event.target.value)}
+              />
+            </span>
+            <small>{formatWindowLabel(stop.window)}{stop.customWindow ? ' (edited)' : ''}</small>
+          </label>
+        )}
+        {onCallConfirmation && (
+          <div className="dispatch-node__voice">
+            <button
+              type="button"
+              disabled={calling}
+              onClick={(event) => {
+                event.stopPropagation();
+                onCallConfirmation();
+              }}
+            >
+              {calling ? 'Calling test…' : 'Call test confirmation'}
+            </button>
+            {(stop.voiceCallStatus || stop.voiceConfirmationResponse) && (
+              <small>
+                {formatVoiceConfirmationLabel(stop)}
+              </small>
+            )}
+            {stop.voiceConfirmationDetails && (
+              <small>{stop.voiceConfirmationDetails}</small>
+            )}
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
+
+export default function DispatchBoard({
+  selectedDate,
+  onSelectDate,
+}: DispatchBoardProps) {
+  const [plan, setPlan] = useState<DispatchPlan | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [importProgress, setImportProgress] =
+    useState<WorkOrderImportProgress | null>(null);
+  const [daySummaries, setDaySummaries] = useState<DispatchDaySummary[]>([]);
+  const [cancelingImport, setCancelingImport] = useState(false);
+  const [callingStopId, setCallingStopId] = useState<string | null>(null);
+  const [closingStopId, setClosingStopId] = useState<string | null>(null);
+  const [deletingStopId, setDeletingStopId] = useState<string | null>(null);
+  const [boardEpoch, setBoardEpoch] = useState(0);
+
+  useEffect(() => {
+    let gotFirstSnapshot = false;
+    setLoading(true);
+    setError(null);
+
+    const unsubscribe = subscribeDispatchPlan(
+      selectedDate,
+      (loaded) => {
+        setPlan(loaded);
+        if (!gotFirstSnapshot) {
+          gotFirstSnapshot = true;
+          setLoading(false);
+        }
+      },
+      (err) => {
+        setError(err.message);
+        setPlan((current) =>
+          current ?? {
+            date: selectedDate,
+            originAddress: DEFAULT_DISPATCH_ORIGIN,
+            trucks: [
+              { id: 'truck1', name: 'Truck 1', set: false, stops: [] },
+              { id: 'truck2', name: 'Truck 2', set: false, stops: [] },
+              { id: 'truck3', name: 'Truck 3', set: false, stops: [] },
+              { id: 'truck4', name: 'Truck 4', set: false, stops: [] },
+              { id: 'truck5', name: 'Truck 5', set: false, stops: [] },
+            ],
+            unassigned: [],
+            notReady: [],
+          }
+        );
+        setLoading(false);
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [selectedDate, boardEpoch]);
+
+  const visibleDispatchDates = useMemo(
+    () => Array.from({ length: 7 }, (_, index) => addDaysToIsoDate(selectedDate, index - 2)),
+    [selectedDate]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all(visibleDispatchDates.map(getDispatchDaySummary))
+      .then((summaries) => {
+        if (!cancelled) setDaySummaries(summaries);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visibleDispatchDates]);
+
+  useEffect(() => {
+    return subscribeLatestWorkOrderImportProgress(
+      setImportProgress,
+      (err) => console.warn('Could not subscribe to import progress:', err)
+    );
+  }, []);
+
+  // Clear the per-stop "Calling…" button state once Firestore reports progress.
+  useEffect(() => {
+    if (!plan || !callingStopId) return;
+    for (const truck of plan.trucks) {
+      const stop = truck.stops.find((item) => item.id === callingStopId);
+      if (!stop?.voiceCallStatus) continue;
+      if (stop.voiceCallStatus !== 'queued') {
+        setCallingStopId(null);
+      }
+      break;
+    }
+  }, [plan, callingStopId]);
+
+  const assignedCount = useMemo(() => {
+    if (!plan) return 0;
+    return plan.trucks.reduce((sum, truck) => sum + truck.stops.length, 0);
+  }, [plan]);
+
+  const persist = async (next: DispatchPlan, message?: string) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await saveDispatchPlan(next);
+      setPlan(next);
+      if (message) setStatus(message);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeStop = (
+    current: DispatchPlan,
+    payload: DragPayload
+  ): { plan: DispatchPlan; stop: DispatchStop | null } => {
+    if (payload.from === 'unassigned') {
+      const stop = current.unassigned.find((item) => item.id === payload.stopId) || null;
+      return {
+        stop,
+        plan: {
+          ...current,
+          unassigned: current.unassigned.filter((item) => item.id !== payload.stopId),
+        },
+      };
+    }
+    if (payload.from === 'notReady') {
+      const stop = current.notReady.find((item) => item.id === payload.stopId) || null;
+      return {
+        stop,
+        plan: {
+          ...current,
+          notReady: current.notReady.filter((item) => item.id !== payload.stopId),
+        },
+      };
+    }
+    const truck = current.trucks.find((item) => item.id === payload.truckId);
+    const stop = truck?.stops.find((item) => item.id === payload.stopId) || null;
+    return {
+      stop,
+      plan: {
+        ...current,
+        trucks: current.trucks.map((item) => {
+          if (item.id !== payload.truckId) return item;
+          return {
+            ...item,
+            stops: applyDefaultWindows(item.stops.filter((s) => s.id !== payload.stopId)),
+          };
+        }),
+      },
+    };
+  };
+
+  const onDropToLane = async (
+    event: DragEvent,
+    target:
+      | { type: 'unassigned' }
+      | { type: 'notReady' }
+      | { type: 'truck'; truckId: string; index?: number }
+  ) => {
+    event.preventDefault();
+    if (!plan) return;
+    const payload = parseDrag(event.dataTransfer.getData('application/json'));
+    if (!payload) return;
+
+    if (target.type === 'truck') {
+      const truck = plan.trucks.find((item) => item.id === target.truckId);
+      if (!truck || truck.set) {
+        setError('That truck is Set. Reopen it before changing stops.');
+        return;
+      }
+    }
+
+    const { plan: without, stop } = removeStop(plan, payload);
+    if (!stop) return;
+
+    let next: DispatchPlan = without;
+    if (target.type === 'unassigned') {
+      next = { ...without, unassigned: [...without.unassigned, stop] };
+    } else if (target.type === 'notReady') {
+      next = { ...without, notReady: [...without.notReady, stop] };
+    } else if (target.type === 'truck') {
+      const truckId = target.truckId;
+      const insertIndex = target.index;
+      next = {
+        ...without,
+        trucks: without.trucks.map((truck) => {
+          if (truck.id !== truckId) return truck;
+          const stops = [...truck.stops];
+          const insertAt =
+            insertIndex == null || insertIndex < 0 || insertIndex > stops.length
+              ? stops.length
+              : insertIndex;
+          stops.splice(insertAt, 0, { ...stop, customWindow: stop.customWindow });
+          return { ...truck, stops: applyDefaultWindows(stops) };
+        }),
+      };
+    }
+
+    await persist(next);
+  };
+
+  const updateStopOnTruck = async (
+    truckId: string,
+    stopId: string,
+    updater: (stop: DispatchStop) => DispatchStop
+  ) => {
+    if (!plan) return;
+    const truck = plan.trucks.find((item) => item.id === truckId);
+    if (!truck || truck.set) return;
+    const next: DispatchPlan = {
+      ...plan,
+      trucks: plan.trucks.map((item) => {
+        if (item.id !== truckId) return item;
+        return {
+          ...item,
+          stops: item.stops.map((stop) => (stop.id === stopId ? updater(stop) : stop)),
+        };
+      }),
+    };
+    await persist(next);
+  };
+
+  const handleSetTruck = async (truck: DispatchTruck, set: boolean) => {
+    if (!plan) return;
+    setSaving(true);
+    setError(null);
+    try {
+      let updatedTruck: DispatchTruck;
+      if (set) {
+        if (truck.stops.length === 0) {
+          setError('Add at least one stop before marking a truck Set.');
+          return;
+        }
+        updatedTruck = await queueMorningTextsForTruck(plan, truck);
+      } else {
+        updatedTruck = await cancelMorningTextsForTruck(plan, truck);
+      }
+      const next: DispatchPlan = {
+        ...plan,
+        trucks: plan.trucks.map((item) => (item.id === truck.id ? updatedTruck : item)),
+      };
+      await saveDispatchPlan(next);
+      setPlan(next);
+      setStatus(
+        set
+          ? `${truck.name} is Set. Morning window texts queued for the test number (+18609643025).`
+          : `${truck.name} reopened. Pending morning texts cancelled.`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteJob = async (stop: DispatchStop) => {
+    if (!plan) return;
+    const label = stop.workOrderNumber || stop.customerName || 'this job';
+    const confirmed = window.confirm(
+      `Delete ${label}? This removes it from the board and deletes the work order.`
+    );
+    if (!confirmed) return;
+
+    setDeletingStopId(stop.id);
+    setError(null);
+    try {
+      const next = await deleteDispatchJob(plan, stop.id);
+      setPlan(next);
+      setStatus(`Deleted ${label}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeletingStopId(null);
+    }
+  };
+
+  const handleCloseJob = async (stop: DispatchStop) => {
+    if (!plan) return;
+    const label = stop.workOrderNumber || stop.customerName || 'this job';
+    const confirmed = window.confirm(
+      `Close ${label}? It will leave dispatch but remain saved in Firebase history.`
+    );
+    if (!confirmed) return;
+
+    setClosingStopId(stop.id);
+    setError(null);
+    try {
+      const next = await closeDispatchJob(plan, stop.id);
+      setPlan(next);
+      setStatus(`Closed ${label}. It remains in work-order history.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setClosingStopId(null);
+    }
+  };
+
+  const handleVoiceConfirmation = async (truck: DispatchTruck, stop: DispatchStop) => {
+    if (!plan) return;
+    setCallingStopId(stop.id);
+    setError(null);
+    try {
+      const result = await initiateVoiceWindowConfirmation(
+        plan.date,
+        truck.id,
+        stop.id
+      );
+      const next: DispatchPlan = {
+        ...plan,
+        trucks: plan.trucks.map((candidate) =>
+          candidate.id !== truck.id
+            ? candidate
+            : {
+                ...candidate,
+                stops: candidate.stops.map((candidateStop) =>
+                  candidateStop.id !== stop.id
+                    ? candidateStop
+                    : {
+                        ...candidateStop,
+                        voiceCallStatus: 'queued',
+                        voiceConfirmationDetails: 'Test call queued',
+                      }
+                ),
+              }
+        ),
+      };
+      setPlan(next);
+      setStatus(
+        `Test confirmation call queued to ${result.testRecipient} for ${formatWindowLabel(
+          stop.window
+        )}.`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCallingStopId(null);
+    }
+  };
+
+  if (loading || !plan) {
+    return (
+      <div className="dispatch-board">
+        <div className="dispatch-board__loading">Loading CT dispatch board…</div>
+        {error && <div className="dispatch-board__error">{error}</div>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="dispatch-board">
+      <div className="dispatch-board__toolbar">
+        <div>
+          <h2>CT Dispatch · 5 trucks</h2>
+          <p>
+            Depot: {plan.originAddress || DEFAULT_DISPATCH_ORIGIN}. Default windows: 1st 8–12,
+            2nd 10–2, 3rd 12–4 (editable). Morning texts and temporary voice confirmations
+            still go to the test number. On voice calls: 1/yes, 2/no, or 9/repeat.
+          </p>
+        </div>
+        <div className="dispatch-board__actions">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={async () => {
+              setSaving(true);
+              setError(null);
+              try {
+                const mockStop = await createMockDispatchJob(plan.date);
+                const next: DispatchPlan = {
+                  ...plan,
+                  unassigned: [...plan.unassigned, mockStop],
+                };
+                await saveDispatchPlan(next);
+                setPlan(next);
+                setStatus(
+                  `Mock job ${mockStop.workOrderNumber} added to Ready / Unassigned. Drag it onto a truck.`
+                );
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            Create test job
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={async () => {
+              setSaving(true);
+              try {
+                const ordered = await autoOrderAllUnsetTrucks(plan);
+                await persist(ordered, 'Ordered unset trucks farthest-from-depot first (priority wins).');
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            Auto-order by distance
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => {
+              setBoardEpoch((value) => value + 1);
+              setStatus('Reloaded jobs for this date.');
+            }}
+          >
+            Refresh jobs
+          </button>
+          <span className="dispatch-board__counts">
+            {assignedCount} assigned · {plan.unassigned.length} ready · {plan.notReady.length} not
+            ready
+          </span>
+        </div>
+      </div>
+
+      <section className="dispatch-board__days" aria-label="Dispatch day overview">
+        {visibleDispatchDates.map((date) => {
+          const summary = daySummaries.find((item) => item.date === date);
+          return (
+            <button
+              key={date}
+              type="button"
+              className={`dispatch-board__day ${
+                date === selectedDate ? 'dispatch-board__day--selected' : ''
+              }`}
+              onClick={() => onSelectDate(date)}
+            >
+              <strong>{formatDispatchDay(date)}</strong>
+              <span>{summary ? `${summary.readyCount} ready` : 'Loading…'}</span>
+              <span>
+                {summary
+                  ? `${summary.scheduledTruckCount} truck${
+                      summary.scheduledTruckCount === 1 ? '' : 's'
+                    } · ${summary.scheduledStopCount} stops`
+                  : ' '}
+              </span>
+              {summary?.notReadyCount ? (
+                <small>{summary.notReadyCount} not ready</small>
+              ) : null}
+            </button>
+          );
+        })}
+      </section>
+
+      {error && <div className="dispatch-board__error">{error}</div>}
+      {status && <div className="dispatch-board__status">{status}</div>}
+      {importProgress && (
+        <div className="dispatch-board__import-progress">
+          <strong>
+            {importProgress.status === 'queued'
+              ? 'Teams import queued'
+              : importProgress.status === 'processing'
+              ? 'Teams import in progress'
+              : importProgress.status === 'failed'
+                ? 'Teams import needs attention'
+                : importProgress.status === 'canceled'
+                  ? 'Teams import canceled'
+                : 'Latest Teams import'}
+          </strong>
+          <span>
+            {importProgress.channelName}: {importProgress.processed}/
+            {importProgress.total} PDFs processed · {importProgress.imported}{' '}
+            imported · {importProgress.cached} cached
+            {importProgress.failed ? ` · ${importProgress.failed} failed` : ''}
+          </span>
+          {importProgress.message && <small>{importProgress.message}</small>}
+          {(importProgress.status === 'queued' ||
+            importProgress.status === 'processing') && (
+            <button
+              type="button"
+              disabled={cancelingImport}
+              onClick={async () => {
+                setCancelingImport(true);
+                try {
+                  await cancelWorkOrderImport(importProgress.id);
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : String(err));
+                } finally {
+                  setCancelingImport(false);
+                }
+              }}
+            >
+              {cancelingImport ? 'Canceling…' : 'Cancel import'}
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="dispatch-board__lanes">
+        <section
+          className="dispatch-lane dispatch-lane--not-ready"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => void onDropToLane(event, { type: 'notReady' })}
+        >
+          <h3>Not Ready</h3>
+          <p className="dispatch-lane__hint">Missing notes on the work order PDF/doc</p>
+          {plan.notReady.length === 0 && (
+            <p className="dispatch-lane__empty">No blocked jobs</p>
+          )}
+          {plan.notReady.map((stop) => (
+            <StopNode
+              key={stop.id}
+              stop={stop}
+              locked={false}
+              dragPayload={{ from: 'notReady', stopId: stop.id }}
+              onDelete={() => void handleDeleteJob(stop)}
+              deleting={deletingStopId === stop.id}
+            />
+          ))}
+        </section>
+
+        <section
+          className="dispatch-lane dispatch-lane--unassigned"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => void onDropToLane(event, { type: 'unassigned' })}
+        >
+          <h3>Ready / Unassigned</h3>
+          <p className="dispatch-lane__hint">Drag onto a truck</p>
+          {plan.unassigned.length === 0 && (
+            <p className="dispatch-lane__empty">No unassigned ready jobs</p>
+          )}
+          {plan.unassigned.map((stop) => (
+            <StopNode
+              key={stop.id}
+              stop={stop}
+              locked={false}
+              onPriorityChange={async (priority) => {
+                const next = {
+                  ...plan,
+                  unassigned: plan.unassigned.map((item) =>
+                    item.id === stop.id ? { ...item, priority } : item
+                  ),
+                };
+                await persist(next);
+              }}
+              dragPayload={{ from: 'unassigned', stopId: stop.id }}
+              onClose={() => void handleCloseJob(stop)}
+              closing={closingStopId === stop.id}
+              onDelete={() => void handleDeleteJob(stop)}
+              deleting={deletingStopId === stop.id}
+            />
+          ))}
+        </section>
+
+        <div className="dispatch-board__trucks">
+          {plan.trucks.map((truck) => (
+            <section
+              key={truck.id}
+              className={`dispatch-truck ${truck.set ? 'dispatch-truck--set' : ''}`}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) =>
+                void onDropToLane(event, { type: 'truck', truckId: truck.id })
+              }
+            >
+              <header className="dispatch-truck__header">
+                <div>
+                  <h3>{truck.name}</h3>
+                  <span>
+                    {truck.stops.length} stop{truck.stops.length === 1 ? '' : 's'}
+                    {truck.set ? ' · SET' : ''}
+                  </span>
+                </div>
+                <div className="dispatch-truck__actions">
+                  <button
+                    type="button"
+                    disabled={saving || truck.set || truck.stops.length < 2}
+                    onClick={async () => {
+                      const ordered = await autoOrderTruckStops(plan, truck.id);
+                      await persist(ordered, `${truck.name} ordered farthest first.`);
+                    }}
+                  >
+                    Farthest first
+                  </button>
+                  {truck.set ? (
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => void handleSetTruck(truck, false)}
+                    >
+                      Reopen
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="dispatch-truck__set"
+                      disabled={saving || truck.stops.length === 0}
+                      onClick={() => void handleSetTruck(truck, true)}
+                    >
+                      Set
+                    </button>
+                  )}
+                </div>
+              </header>
+
+              {truck.stops.length === 0 && (
+                <p className="dispatch-lane__empty">Drop jobs here</p>
+              )}
+
+              {truck.stops.map((stop, index) => (
+                <div
+                  key={stop.id}
+                  className="dispatch-truck__slot"
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => {
+                    event.stopPropagation();
+                    void onDropToLane(event, {
+                      type: 'truck',
+                      truckId: truck.id,
+                      index,
+                    });
+                  }}
+                >
+                  <span className="dispatch-truck__order">{index + 1}</span>
+                  <StopNode
+                    stop={stop}
+                    locked={truck.set}
+                    dragPayload={{
+                      from: 'truck',
+                      truckId: truck.id,
+                      stopId: stop.id,
+                      index,
+                    }}
+                    onPriorityChange={(priority) =>
+                      void updateStopOnTruck(truck.id, stop.id, (current) => ({
+                        ...current,
+                        priority,
+                      }))
+                    }
+                    onWindowChange={(start, end) =>
+                      void updateStopOnTruck(truck.id, stop.id, (current) => ({
+                        ...current,
+                        window: { start, end },
+                        customWindow: true,
+                      }))
+                    }
+                    onCallConfirmation={() =>
+                      void handleVoiceConfirmation(truck, stop)
+                    }
+                    calling={callingStopId === stop.id}
+                    onDelete={() => void handleDeleteJob(stop)}
+                    deleting={deletingStopId === stop.id}
+                  />
+                </div>
+              ))}
+            </section>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

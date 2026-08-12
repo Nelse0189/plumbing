@@ -1,0 +1,175 @@
+.call-intake {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.25rem 1.5rem 2rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.call-intake__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.call-intake h2,
+.call-intake h3 {
+  color: var(--accent);
+}
+
+.call-intake__header p,
+.call-intake__empty {
+  margin-top: 0.35rem;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.call-intake__mock,
+.call-intake__chat,
+.call-intake__calls {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-secondary);
+}
+
+.call-intake__mock {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.call-intake__mock label {
+  display: grid;
+  gap: 0.3rem;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.call-intake__mock textarea {
+  min-height: 150px;
+  resize: vertical;
+}
+
+.call-intake__mock button {
+  justify-self: start;
+}
+
+.call-intake__chat > div {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+}
+
+.call-intake__chat input {
+  flex: 1;
+  min-width: 0;
+}
+
+.call-intake__answer {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-primary);
+  white-space: pre-wrap;
+  line-height: 1.5;
+  font-size: 0.85rem;
+}
+
+.call-intake__calls {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.call-intake__call {
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+}
+
+.call-intake__call header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.75rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.call-intake__call header span {
+  color: var(--text-secondary);
+}
+
+.call-intake__status {
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  text-transform: capitalize;
+}
+
+.call-intake__status--processed {
+  color: var(--success) !important;
+}
+
+.call-intake__status--needs_review,
+.call-intake__status--failed {
+  color: var(--error) !important;
+}
+
+.call-intake__call > p,
+.call-intake__call li {
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.call-intake__call ul {
+  margin: 0.6rem 0 0 1.2rem;
+  color: var(--text-secondary);
+}
+
+.call-intake__appointment {
+  margin-top: 0.6rem;
+  color: var(--success);
+}
+
+.call-intake__call details {
+  margin-top: 0.75rem;
+}
+
+.call-intake__call summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 0.78rem;
+}
+
+.call-intake__transcript {
+  max-height: 300px;
+  overflow: auto;
+  margin-top: 0.6rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.call-intake__transcript mark {
+  background: var(--accent);
+  color: var(--bg-primary);
+}
+
+.call-intake__error {
+  padding: 0.75rem;
+  border: 1px solid var(--error);
+  background: rgba(202, 71, 84, 0.15);
+  color: #ffb4b4;
+}
+
+@media (max-width: 700px) {
+  .call-intake__header,
+  .call-intake__chat > div {
+    flex-direction: column;
+  }
+}

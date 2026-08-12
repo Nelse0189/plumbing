@@ -348,6 +348,16 @@ export default function ScheduleForm({ trucks, selectedDate, onSave }: ScheduleF
                         <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
                           <strong>Phone:</strong> {stop.phone || 'Not provided in transcript'}
                         </div>
+                        {stop.workOrderNumber && (
+                          <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
+                            <strong>Work order:</strong> {stop.workOrderNumber}
+                          </div>
+                        )}
+                        {stop.jobType && (
+                          <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
+                            <strong>Job type:</strong> {stop.jobType}
+                          </div>
+                        )}
                         {stop.notes && (
                           <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.25rem', fontStyle: 'italic' }}>
                             <strong>Notes:</strong> {stop.notes}
