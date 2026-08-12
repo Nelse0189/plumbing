@@ -3,13 +3,14 @@ import { format } from 'date-fns';
 import ScheduleForm from './components/ScheduleForm';
 import MapView from './components/MapView';
 import DispatchBoard from './components/DispatchBoard';
+import CallIntake from './components/CallIntake';
 import type { Truck, Schedule } from './types';
 import { getTrucksForDate, saveSchedule } from './services/scheduleService';
 import './App.css';
 
 function App() {
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
-  const [viewMode, setViewMode] = useState<'dispatch' | 'schedule' | 'map'>('dispatch');
+  const [viewMode, setViewMode] = useState<'dispatch' | 'schedule' | 'map' | 'calls'>('dispatch');
   const [trucks, setTrucks] = useState<Truck[]>([
     { id: 'truck1', name: 'Truck 1', stops: [] },
     { id: 'truck2', name: 'Truck 2', stops: [] },
@@ -109,6 +110,16 @@ function App() {
             >
               Map View
             </button>
+            <button
+              onClick={() => setViewMode('calls')}
+              style={{
+                backgroundColor: viewMode === 'calls' ? 'var(--accent)' : 'var(--bg-secondary)',
+                color: viewMode === 'calls' ? 'var(--bg-primary)' : 'var(--text-primary)',
+                borderColor: viewMode === 'calls' ? 'var(--accent)' : 'var(--border)',
+              }}
+            >
+              Calls
+            </button>
             <a
               href="/teams-test"
               style={{
@@ -135,6 +146,8 @@ function App() {
             selectedDate={selectedDate}
             onSelectDate={setSelectedDate}
           />
+        ) : viewMode === 'calls' ? (
+          <CallIntake selectedDate={selectedDate} />
         ) : loading ? (
           <div style={{
             padding: '2rem',

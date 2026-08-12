@@ -29,6 +29,10 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    match /voxrushCalls/{document} {
+      allow read, write: if true;
+    }
+
     match /schedulingRequests/{document} {
       allow read, write: if true;
     }

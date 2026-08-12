@@ -53,6 +53,28 @@ export interface StoredWorkOrder extends WorkOrder {
   cached?: boolean;
 }
 
+export interface VoxrushAppointmentEvidence {
+  quote: string;
+  start: number;
+  end: number;
+}
+
+export interface VoxrushCall {
+  id: string;
+  callDate: string;
+  startedAt: string;
+  callerPhone?: string;
+  direction?: string;
+  transcript: string;
+  summary: string;
+  customerServiceTips: string[];
+  appointmentMade: boolean;
+  workOrderId?: string;
+  appointmentEvidence?: VoxrushAppointmentEvidence;
+  status: 'processed' | 'needs_review' | 'failed';
+  error?: string;
+}
+
 /** 4-hour arrival window shown to the customer (HH:MM, 24h). */
 export interface ArrivalWindow {
   start: string;
