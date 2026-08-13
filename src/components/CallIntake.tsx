@@ -88,7 +88,7 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
           <p className={`call-intake__connection ${connection?.connected ? 'is-connected' : 'is-disconnected'}`}>
             {connection?.connected
               ? `Connected to Plaud${connection.name || connection.email ? ` · ${connection.name || connection.email}` : ''}`
-              : connection?.error || 'Plaud is not connected. Add PLAUD_REFRESH_TOKEN from ~/.plaud/tokens.json after `plaud login`.'}
+              : connection?.error || 'Plaud is not connected. On your computer run `npx -y @plaud-ai/cli login`, then add PLAUD_REFRESH_TOKEN from ~/.plaud/tokens.json.'}
           </p>
         </div>
         <div className="call-intake__actions">
