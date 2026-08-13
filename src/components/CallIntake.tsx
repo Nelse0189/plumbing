@@ -139,9 +139,20 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
             </li>
             <li>Click the <strong>Application</strong> tab. If you do not see it, click the <strong>&gt;&gt;</strong> overflow.</li>
             <li>
-              Skip <code>pld_sessionMeta</code> and <code>token_id</code> — those are not the login token.
-              In Local Storage → <code>https://web.plaud.ai</code>, find a key that
-              <strong>ends with</strong> <code>:workspaceList</code>.
+              Look at the <strong>key names on the left</strong>, not fields inside a value.
+              <code>workspaceId</code> inside <code>pld_sessionMeta</code> is not the token.
+            </li>
+            <li>
+              In the <strong>Console</strong> tab, run this. It prints key names only:
+              <pre className="call-intake__transcript">{`Object.keys(localStorage).forEach((k) => {
+  const v = localStorage.getItem(k) || '';
+  const hints = [];
+  if (k.endsWith(':workspaceList')) hints.push('workspaceList-key');
+  if (v.includes('workspaceToken')) hints.push('has-workspaceToken');
+  if (v.includes('refreshToken')) hints.push('has-refreshToken');
+  if (v.startsWith('eyJ')) hints.push('looks-like-jwt');
+  console.log(k, hints.join(', ') || 'no-token-hints');
+});`}</pre>
             </li>
             <li>
               Open that value and copy <code>workspaceToken</code> only. Or use the
