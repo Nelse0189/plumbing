@@ -172,9 +172,18 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
             <textarea
               value={webToken}
               onChange={(event) => setWebToken(event.target.value)}
-              placeholder="bearer eyJ... or the pld_ut cookie value"
+              placeholder="Paste the long eyJ... value after Bearer"
             />
           </label>
+          <p className="call-intake__sync">
+            {webToken.trim()
+              ? `Paste length: ${webToken.trim().length} characters${
+                  webToken.includes('eyJ')
+                    ? '. This includes an eyJ token.'
+                    : '. A real Plaud token starts with eyJ and is usually 800+ characters.'
+                }`
+              : 'A real Plaud token starts with eyJ, has two dots, and is usually 800–2000 characters. Short IDs like workspaceId are the wrong value.'}
+          </p>
           <label>
             API base (usually leave this)
             <input value={webApiBase} onChange={(event) => setWebApiBase(event.target.value)} />

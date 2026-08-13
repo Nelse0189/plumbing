@@ -1152,6 +1152,7 @@ type PlaudSession = {
   mode: "developer" | "consumer";
   accessToken: string;
   apiBase: string;
+  authScheme?: string;
 };
 
 type PlaudSegment = {
@@ -1215,8 +1216,34 @@ function plaudFileId(value: unknown): string {
   );
 }
 
+function extractPlaudJwt(value: string): string {
+  const trimmed = value.trim().replace(/^["']+|["']+$/g, "");
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    const record = asRecord(parsed);
+    const nested = Array.isArray(parsed)
+      ? asRecord(parsed[0])
+      : asRecord(record.list || record.data || record[0]);
+    const fromJson =
+      asTrimmedString(record.workspaceToken) ||
+      asTrimmedString(nested.workspaceToken) ||
+      asTrimmedString(record.access_token) ||
+      asTrimmedString(record.token);
+    if (fromJson) return extractPlaudJwt(fromJson);
+  } catch {
+    // Not JSON; keep scanning the raw paste.
+  }
+  const compact = trimmed.replace(/^(bearer|wt|ut|wrt)\s+/i, "").replace(/\s+/g, "");
+  const jwtMatch = compact.match(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
+  return jwtMatch ? jwtMatch[0] : compact;
+}
+
+function describePlaudToken(token: string): string {
+  return `${token.length} characters, ${token.split(".").length} parts, starts with "${token.slice(0, 3)}"`;
+}
+
 function normalizePlaudWebToken(value: string): string {
-  return value.trim().replace(/^bearer\s+/i, "");
+  return extractPlaudJwt(value);
 }
 
 function plaudConsumerApiBase(value?: string): string {
@@ -1247,6 +1274,7 @@ async function getPlaudSession(): Promise<PlaudSession> {
     return {
       mode: storedMode,
       accessToken: cachedAccess,
+      authScheme: asTrimmedString(data.authScheme) || (storedMode === "consumer" ? "Bearer" : "Bearer"),
       apiBase:
         storedMode === "consumer"
           ? plaudConsumerApiBase(asTrimmedString(data.apiBase))
@@ -1258,6 +1286,7 @@ async function getPlaudSession(): Promise<PlaudSession> {
     return {
       mode: "consumer",
       accessToken: cachedAccess,
+      authScheme: asTrimmedString(data.authScheme) || "Bearer",
       apiBase: plaudConsumerApiBase(asTrimmedString(data.apiBase)),
     };
   }
@@ -1326,7 +1355,7 @@ async function plaudRequest<T>(path: string, retry = true): Promise<T> {
   const session = await getPlaudSession();
   const response = await fetch(`${session.apiBase}${path}`, {
     headers: {
-      Authorization: `${session.mode === "consumer" ? "bearer" : "Bearer"} ${session.accessToken}`,
+      Authorization: `${session.authScheme || (session.mode === "consumer" ? "Bearer" : "Bearer")} ${session.accessToken}`,
       Accept: "application/json",
     },
   });
@@ -1345,20 +1374,35 @@ async function plaudRequest<T>(path: string, retry = true): Promise<T> {
 }
 
 async function verifyPlaudWebToken(token: string, apiBase: string) {
-  const response = await fetch(`${apiBase}/file/simple/web?skip=0&limit=1`, {
-    headers: {
-      Authorization: `bearer ${token}`,
-      Accept: "application/json",
-    },
-  });
-  if (!response.ok) {
-    const detail = await response.text();
+  if (!/^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) {
     throw new HttpsError(
       "invalid-argument",
-      `That Plaud web token was rejected (${response.status}). Sign in at https://web.plaud.ai and copy a fresh tokenstr or pld_ut value. ${detail.slice(0, 160)}`
+      `That paste is not a Plaud JWT (${describePlaudToken(token)}). A real token starts with eyJ, has two dots, and is usually 800+ characters. Copy the Authorization value after Bearer from an api.plaud.ai request, not workspaceId or token_id.`
     );
   }
-  return asRecord(await response.json());
+  const schemes = ["Bearer", "bearer", "WT", "UT"];
+  let lastDetail = "";
+  for (const scheme of schemes) {
+    const response = await fetch(`${apiBase}/file/simple/web?skip=0&limit=1`, {
+      headers: {
+        Authorization: `${scheme} ${token}`,
+        Accept: "application/json",
+      },
+    });
+    const raw = await response.text();
+    lastDetail = raw.slice(0, 180);
+    if (!response.ok) continue;
+    const payload = asRecord(JSON.parse(raw || "{}"));
+    const status = payload.status;
+    if (status === undefined || status === 0 || status === "0" || status === "success") {
+      return { payload, authScheme: scheme };
+    }
+    lastDetail = asTrimmedString(payload.msg) || lastDetail;
+  }
+  throw new HttpsError(
+    "invalid-argument",
+    `Plaud rejected that JWT (${describePlaudToken(token)}). ${lastDetail} Copy a fresh Authorization Bearer value from a live api.plaud.ai request.`
+  );
 }
 
 function plaudFilesFromPage(payload: unknown): PlaudFileSummary[] {
@@ -1887,17 +1931,18 @@ export const connectPlaudWebSession = onCall({ cors: true }, async (request) => 
   const input = request.data as { token?: unknown; apiBase?: unknown };
   const token = normalizePlaudWebToken(asTrimmedString(input.token));
   const apiBase = plaudConsumerApiBase(asTrimmedString(input.apiBase));
-  if (token.length < 20) {
+  if (token.length < 80) {
     throw new HttpsError(
       "invalid-argument",
-      "Paste the Plaud web tokenstr or pld_ut value from https://web.plaud.ai"
+      `That paste is too short to be a Plaud token (${describePlaudToken(token)}). workspaceId and token_id are not the token. Copy the long eyJ... value after Bearer.`
     );
   }
-  await verifyPlaudWebToken(token, apiBase);
+  const verified = await verifyPlaudWebToken(token, apiBase);
   await admin.firestore().doc(PLAUD_AUTH_DOC).set(
     {
       mode: "consumer",
       accessToken: token,
+      authScheme: verified.authScheme,
       apiBase,
       refreshToken: "",
       expiresAtMs: Date.now() + 30 * 24 * 60 * 60 * 1000,
