@@ -6,13 +6,23 @@ CLI (`plaud files`, `plaud transcript`, `plaud summary`).
 
 ## One-time Plaud login
 
+Run this on your own computer, not in the Cloud Agent terminal. `plaud login`
+opens a browser and writes tokens to your home directory. A global `npm
+install -g` is not required and often fails with `EACCES`.
+
 On a trusted machine with Node.js 20+:
 
 ```bash
-npm install -g @plaud-ai/cli
-plaud login
-plaud me
-plaud today
+npx -y @plaud-ai/cli login
+npx -y @plaud-ai/cli me
+npx -y @plaud-ai/cli today
+```
+
+If you prefer a local install instead of `npx`:
+
+```bash
+npm install @plaud-ai/cli
+npx plaud login
 ```
 
 `plaud login` stores tokens at `~/.plaud/tokens.json`. Copy the
