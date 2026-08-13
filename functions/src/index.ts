@@ -1216,6 +1216,49 @@ function plaudFileId(value: unknown): string {
   );
 }
 
+const PLAUD_JWT_RE = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
+const PLAUD_COOKIE_TOKEN_NAMES = [
+  "pld_wt",
+  "pld-wt",
+  "wt",
+  "pld_ut",
+  "pld-ut",
+  "pld_token",
+  "tokenstr",
+  "token",
+];
+
+function isPlaudJwt(value: string): boolean {
+  return /^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value);
+}
+
+function firstPlaudJwt(value: string): string {
+  const match = value.match(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
+  return match ? match[0] : "";
+}
+
+function longestPlaudJwt(values: string[]): string {
+  return values
+    .filter(isPlaudJwt)
+    .sort((left, right) => right.length - left.length)[0] || "";
+}
+
+function cookiePairsFromPaste(value: string): Map<string, string> {
+  const pairs = new Map<string, string>();
+  const cookieText = value.replace(/^(cookie)\s*:\s*/i, "");
+  for (const part of cookieText.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq <= 0) continue;
+    const name = part.slice(0, eq).trim().toLowerCase();
+    const raw = part
+      .slice(eq + 1)
+      .trim()
+      .replace(/^["']+|["']+$/g, "");
+    if (name) pairs.set(name, raw);
+  }
+  return pairs;
+}
+
 function extractPlaudJwt(value: string): string {
   const trimmed = value.trim().replace(/^["']+|["']+$/g, "");
   try {
@@ -1233,12 +1276,24 @@ function extractPlaudJwt(value: string): string {
   } catch {
     // Not JSON; keep scanning the raw paste.
   }
-  const beforeSemicolon = trimmed.split(";")[0].trim();
-  const compact = beforeSemicolon
+
+  const pairs = cookiePairsFromPaste(trimmed);
+  for (const name of PLAUD_COOKIE_TOKEN_NAMES) {
+    const raw = pairs.get(name);
+    if (!raw) continue;
+    const jwt = isPlaudJwt(raw) ? raw : firstPlaudJwt(raw);
+    if (jwt) return jwt;
+  }
+
+  const allJwts = trimmed.match(PLAUD_JWT_RE) || [];
+  const best = longestPlaudJwt(allJwts);
+  if (best) return best;
+
+  const compact = trimmed
+    .replace(/^(cookie|authorization)\s*:\s*/i, "")
     .replace(/^(bearer|wt|ut|wrt)\s+/i, "")
     .replace(/\s+/g, "");
-  const jwtMatch = compact.match(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
-  return jwtMatch ? jwtMatch[0] : compact;
+  return firstPlaudJwt(compact) || compact.split(";")[0];
 }
 
 function describePlaudToken(token: string): string {
@@ -1468,7 +1523,7 @@ async function verifyPlaudWebToken(token: string, apiBase: string) {
   if (!/^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) {
     throw new HttpsError(
       "invalid-argument",
-      `That paste is not a Plaud JWT (${describePlaudToken(token)}). A real token starts with eyJ, has two dots, and is usually 800+ characters. Copy the Authorization value after Bearer from an api.plaud.ai request, not workspaceId or token_id.`
+      `That paste is not a Plaud JWT (${describePlaudToken(token)}). A real token starts with eyJ and has two dots. From the api.plaud.ai request, paste the whole Cookie header or the Authorization value after Bearer.`
     );
   }
   const schemes = ["Bearer", "bearer", "WT", "UT"];
@@ -2035,7 +2090,7 @@ export const connectPlaudWebSession = onCall({ cors: true }, async (request) => 
   if (token.length < 80) {
     throw new HttpsError(
       "invalid-argument",
-      `That paste is too short to be a Plaud token (${describePlaudToken(token)}). workspaceId and token_id are not the token. Copy the long eyJ... value after Bearer.`
+      `That paste is too short to be a Plaud token (${describePlaudToken(token)}). workspaceId and token_id are not the token. From the api.plaud.ai request, paste the whole Cookie line or the long eyJ... value after Bearer.`
     );
   }
   const verified = await verifyPlaudWebToken(token, apiBase);

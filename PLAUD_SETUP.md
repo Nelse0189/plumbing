@@ -12,11 +12,15 @@ Plaud's official CLI login currently shows a broken page with labels like
 1. Open https://web.plaud.ai and sign in as usual.
 2. In Edge, open Developer tools with **Ctrl+Shift+I**, right-click → **Inspect**,
    or **Fn+F12**. Or use ⋯ → More tools → Developer tools.
-3. Open the **Application** tab.
-4. Ignore `pld_sessionMeta` / `token_id`. Those are not the login token.
-5. Local Storage → `https://web.plaud.ai` → open the key that ends with
-   `:workspaceList` → copy `workspaceToken`.
-6. Or in the Console tab run:
+3. Open the **Network** tab, refresh the page, and click a request whose URL
+   contains `api.plaud.ai`.
+4. Open **Cookies** or **Headers → Cookie**. You can paste the entire Cookie
+   line on the Calls tab. The app extracts `pld_wt` or `pld_ut` (the `eyJ...`
+   value). Semicolons only separate cookies.
+5. Ignore `pld_sessionMeta` / `token_id`. Those are not the login token.
+6. If Cookie has no `eyJ` value, try Local Storage → `https://web.plaud.ai` →
+   the key that ends with `:workspaceList` → copy `workspaceToken`.
+7. Or in the Console tab run:
 
    ```js
    const key = Object.keys(localStorage).find(k => k.endsWith(':workspaceList'));
@@ -24,7 +28,7 @@ Plaud's official CLI login currently shows a broken page with labels like
    copy(list[0].workspaceToken);
    ```
 
-7. On the dispatch **Calls** tab, paste that value and click **Connect Plaud account**.
+8. On the dispatch **Calls** tab, paste that Cookie line or token and click **Connect Plaud account**.
 
 Do not paste the token into chat. The Calls tab stores it in a private
 Firestore document used only by Cloud Functions.

@@ -138,14 +138,14 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
               laptops use <strong>Fn+F12</strong>. Or open the ⋯ menu → More tools → Developer tools.
             </li>
             <li>
-              Easiest path: open the <strong>Network</strong> tab, refresh
-              https://web.plaud.ai, click a request whose URL contains
-              <code>api.plaud.ai</code>, then open <strong>Headers</strong> →
-              Request Headers. Prefer <code>Authorization</code> and copy the
-              value after <code>Bearer</code>. Skip the whole <code>Cookie</code>
-              line. If you only have Cookie, copy just the one value that starts
-              with <code>eyJ</code> (often <code>pld_ut</code>), from after
-              <code>=</code> up to but not including the next <code>;</code>.
+              You are in the right place: an <code>api.plaud.ai</code> request
+              and its <strong>Cookie</strong> / <strong>Cookies</strong> section.
+              You can paste the entire Cookie line into the box below. The app
+              will pull out <code>pld_wt</code> or <code>pld_ut</code> (the
+              value that starts with <code>eyJ</code>). If the Cookies panel is
+              a table, copy the Value for <code>pld_wt</code> first, or
+              <code>pld_ut</code> if that is the only <code>eyJ</code> cookie.
+              A semicolon only separates cookies; it is not part of the token.
             </li>
             <li>
               <code>workspaceId</code> inside <code>pld_sessionMeta</code> is not
@@ -197,18 +197,19 @@ console.log('click a Plaud recording now');`}</pre>
             <textarea
               value={webToken}
               onChange={(event) => setWebToken(event.target.value)}
-              placeholder="Paste the long eyJ... value after Bearer"
+              placeholder="Paste the whole Cookie line, or the eyJ... value"
             />
           </label>
           <p className="call-intake__sync">
             {webToken.trim()
               ? `Paste length: ${webToken.trim().length} characters${
-                  webToken.includes('eyJ')
-                    ? '. This includes an eyJ token.'
-                    : '. A real Plaud token starts with eyJ and is usually 800+ characters.'
+                  /pld_wt|pld_ut/i.test(webToken)
+                    ? '. This looks like a Cookie header — we will extract pld_wt or pld_ut.'
+                    : webToken.includes('eyJ')
+                      ? `. Found ${(webToken.match(/eyJ/g) || []).length} eyJ value(s).`
+                      : '. A real Plaud token starts with eyJ. If this is the Cookie line, paste the whole line.'
                 }`
-              : 'A real Plaud token starts with eyJ, has two dots, and is usually 800–2000 characters. Stop before any semicolon — that starts the next cookie, not the token.'}
-          </p>
+              : 'Paste the whole Cookie line from the api.plaud.ai request, or just the eyJ... cookie value. Do not paste the token into chat.'}
           <label>
             API base (usually leave this)
             <input value={webApiBase} onChange={(event) => setWebApiBase(event.target.value)} />
