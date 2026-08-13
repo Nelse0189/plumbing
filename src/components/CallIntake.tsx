@@ -182,7 +182,7 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
                     ? '. This includes an eyJ token.'
                     : '. A real Plaud token starts with eyJ and is usually 800+ characters.'
                 }`
-              : 'A real Plaud token starts with eyJ, has two dots, and is usually 800–2000 characters. Short IDs like workspaceId are the wrong value.'}
+              : 'A real Plaud token starts with eyJ, has two dots, and is usually 800–2000 characters. Stop before any semicolon — that starts the next cookie, not the token.'}
           </p>
           <label>
             API base (usually leave this)

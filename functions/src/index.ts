@@ -1233,7 +1233,10 @@ function extractPlaudJwt(value: string): string {
   } catch {
     // Not JSON; keep scanning the raw paste.
   }
-  const compact = trimmed.replace(/^(bearer|wt|ut|wrt)\s+/i, "").replace(/\s+/g, "");
+  const beforeSemicolon = trimmed.split(";")[0].trim();
+  const compact = beforeSemicolon
+    .replace(/^(bearer|wt|ut|wrt)\s+/i, "")
+    .replace(/\s+/g, "");
   const jwtMatch = compact.match(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
   return jwtMatch ? jwtMatch[0] : compact;
 }
