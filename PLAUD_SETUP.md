@@ -33,7 +33,26 @@ npm install @plaud-ai/cli
 npx plaud login
 ```
 
-`plaud login` stores tokens at `~/.plaud/tokens.json`. Copy the
+A successful login creates `tokens.json`. `version-check.json` only means the
+CLI started; it is not the login file.
+
+| Computer | Token file |
+| --- | --- |
+| Windows | `C:\Users\<you>\.plaud\tokens.json` |
+| macOS / Linux | `~/.plaud/tokens.json` |
+
+If that file is missing, login did not finish. Run `login` again and leave the
+terminal open until it says authorization succeeded. If no browser opens, copy
+the URL printed in the terminal and open it yourself, then click **Authorize**.
+
+Confirm with:
+
+```bat
+npx.cmd -y @plaud-ai/cli me
+dir %USERPROFILE%\.plaud
+```
+
+`me` should print your Plaud account. Then open `tokens.json` and copy the
 `refresh_token` value into Cloud Functions:
 
 ```env
