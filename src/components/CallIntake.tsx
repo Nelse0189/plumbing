@@ -137,35 +137,34 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
               right-click the page and choose <strong>Inspect</strong>. On many
               laptops use <strong>Fn+F12</strong>. Or open the ⋯ menu → More tools → Developer tools.
             </li>
-            <li>Click the <strong>Application</strong> tab. If you do not see it, click the <strong>&gt;&gt;</strong> overflow.</li>
             <li>
-              Look at the <strong>key names on the left</strong>, not fields inside a value.
-              <code>workspaceId</code> inside <code>pld_sessionMeta</code> is not the token.
+              Easiest path: open the <strong>Network</strong> tab, refresh
+              https://web.plaud.ai, click a request whose URL contains
+              <code>api.plaud.ai</code>, then open <strong>Headers</strong> →
+              Request Headers → copy the value after <code>Bearer</code> in
+              <code>Authorization</code>.
             </li>
             <li>
-              In the <strong>Console</strong> tab, run this. It prints key names only:
-              <pre className="call-intake__transcript">{`Object.keys(localStorage).forEach((k) => {
-  const v = localStorage.getItem(k) || '';
-  const hints = [];
-  if (k.endsWith(':workspaceList')) hints.push('workspaceList-key');
-  if (v.includes('workspaceToken')) hints.push('has-workspaceToken');
-  if (v.includes('refreshToken')) hints.push('has-refreshToken');
-  if (v.startsWith('eyJ')) hints.push('looks-like-jwt');
-  console.log(k, hints.join(', ') || 'no-token-hints');
+              <code>workspaceId</code> inside <code>pld_sessionMeta</code> is not
+              the token. Look at key names on the left of Local Storage, not
+              fields inside a JSON value.
+            </li>
+            <li>
+              If Network does not show Authorization, run this in the
+              <strong>Console</strong> tab. It prints key names only — paste
+              those names here if you get stuck:
+              <pre className="call-intake__transcript">{`['localStorage','sessionStorage'].forEach((label) => {
+  const store = label === 'localStorage' ? localStorage : sessionStorage;
+  Object.keys(store).forEach((k) => {
+    const v = store.getItem(k) || '';
+    const hints = [];
+    if (/workspaceList/i.test(k)) hints.push('name-has-workspaceList');
+    if (/token/i.test(k)) hints.push('name-has-token');
+    if (v.includes('workspaceToken')) hints.push('has-workspaceToken');
+    if (v.startsWith('eyJ') || v.includes('"eyJ')) hints.push('looks-like-jwt');
+    console.log(label, k, hints.join(',') || 'no-token-hints');
+  });
 });`}</pre>
-            </li>
-            <li>
-              Open that value and copy <code>workspaceToken</code> only. Or use the
-              <strong>Console</strong> tab and run:
-              <pre className="call-intake__transcript">{`const key = Object.keys(localStorage).find(k => k.endsWith(':workspaceList'));
-const list = JSON.parse(localStorage.getItem(key) || '[]');
-copy(list[0].workspaceToken);`}</pre>
-              That copies the token to your clipboard without showing it.
-            </li>
-            <li>
-              Alternative: Network tab → refresh the page → click a request to
-              <code>api.plaud.ai</code> → Request Headers → copy the
-              <code>Authorization</code> value after <code>Bearer</code>.
             </li>
           </ol>
           <label>
