@@ -1,13 +1,26 @@
 import { useEffect, useState } from 'react';
-import type { VoxrushCall } from '../types';
+import type { PlaudCall, PlaudConnection, PlaudSyncSummary } from '../types';
 import {
-  askVoxrushCalls,
-  listVoxrushCalls,
-  mockVoxrushCall,
-} from '../services/voxrushService';
+  askPlaudCalls,
+  getPlaudConnection,
+  importPlaudTranscript,
+  listPlaudCalls,
+  syncPlaudCalls,
+} from '../services/plaudService';
 import './CallIntake.css';
 
-function TranscriptWithEvidence({ call }: { call: VoxrushCall }) {
+function formatDuration(ms?: number | null): string {
+  if (!ms || ms <= 0) return '';
+  const total = Math.floor(ms / 1000);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours > 0) return `${hours}h ${String(minutes).padStart(2, '0')}m`;
+  if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+  return `${seconds}s`;
+}
+
+function TranscriptWithEvidence({ call }: { call: PlaudCall }) {
   const evidence = call.appointmentEvidence;
   if (!evidence?.quote || evidence.start < 0) {
     return <pre className="call-intake__transcript">{call.transcript}</pre>;
@@ -24,10 +37,14 @@ function TranscriptWithEvidence({ call }: { call: VoxrushCall }) {
 }
 
 export default function CallIntake({ selectedDate }: { selectedDate: string }) {
-  const [calls, setCalls] = useState<VoxrushCall[]>([]);
+  const [calls, setCalls] = useState<PlaudCall[]>([]);
+  const [connection, setConnection] = useState<PlaudConnection | null>(null);
+  const [syncSummary, setSyncSummary] = useState<PlaudSyncSummary | null>(null);
   const [transcript, setTranscript] = useState('');
   const [phone, setPhone] = useState('');
+  const [recordingName, setRecordingName] = useState('');
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
@@ -38,7 +55,12 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
     setLoading(true);
     setError(null);
     try {
-      setCalls(await listVoxrushCalls(selectedDate));
+      const [nextCalls, nextConnection] = await Promise.all([
+        listPlaudCalls(selectedDate),
+        getPlaudConnection(),
+      ]);
+      setCalls(nextCalls);
+      setConnection(nextConnection);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -47,6 +69,8 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
   };
 
   useEffect(() => {
+    setAnswer('');
+    setSyncSummary(null);
     void reload();
   }, [selectedDate]);
 
@@ -54,58 +78,54 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
     <div className="call-intake">
       <header className="call-intake__header">
         <div>
-          <h2>Voxrush Call Intake · {selectedDate}</h2>
+          <h2>Plaud Call Intake · {selectedDate}</h2>
           <p>
-            Mock call ingestion until Voxrush webhook details are available. Calls
-            are transcribed, summarized, and attributed to a work order.
+            Recordings sync from your Plaud Note through the same API as
+            {' '}<code>plaud files</code> and <code>plaud transcript</code>.
+            New calls are summarized, and water-heater appointments are turned
+            into work orders with the confirming transcript highlighted.
+          </p>
+          <p className={`call-intake__connection ${connection?.connected ? 'is-connected' : 'is-disconnected'}`}>
+            {connection?.connected
+              ? `Connected to Plaud${connection.name || connection.email ? ` · ${connection.name || connection.email}` : ''}`
+              : connection?.error || 'Plaud is not connected. Add PLAUD_REFRESH_TOKEN from ~/.plaud/tokens.json after `plaud login`.'}
           </p>
         </div>
-        <button type="button" disabled={loading} onClick={() => void reload()}>
-          {loading ? 'Loading…' : 'Refresh calls'}
-        </button>
+        <div className="call-intake__actions">
+          <button
+            type="button"
+            disabled={syncing || !connection?.connected}
+            onClick={async () => {
+              setSyncing(true);
+              setError(null);
+              try {
+                const summary = await syncPlaudCalls({ date: selectedDate });
+                setSyncSummary(summary);
+                await reload();
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setSyncing(false);
+              }
+            }}
+          >
+            {syncing ? 'Syncing Plaud…' : 'Sync Plaud recordings'}
+          </button>
+          <button type="button" disabled={loading} onClick={() => void reload()}>
+            {loading ? 'Loading…' : 'Refresh calls'}
+          </button>
+        </div>
       </header>
 
       {error && <div className="call-intake__error">{error}</div>}
-
-      <section className="call-intake__mock">
-        <h3>Add mock Voxrush call</h3>
-        <label>
-          Caller phone (optional)
-          <input value={phone} onChange={(event) => setPhone(event.target.value)} />
-        </label>
-        <label>
-          Call transcript
-          <textarea
-            value={transcript}
-            onChange={(event) => setTranscript(event.target.value)}
-            placeholder="Paste a realistic customer scheduling call transcript…"
-          />
-        </label>
-        <button
-          type="button"
-          disabled={submitting || transcript.trim().length < 20}
-          onClick={async () => {
-            setSubmitting(true);
-            setError(null);
-            try {
-              await mockVoxrushCall({
-                transcript,
-                callerPhone: phone,
-                startedAt: `${selectedDate}T12:00:00.000Z`,
-              });
-              setTranscript('');
-              setPhone('');
-              await reload();
-            } catch (err) {
-              setError(err instanceof Error ? err.message : String(err));
-            } finally {
-              setSubmitting(false);
-            }
-          }}
-        >
-          {submitting ? 'Processing call…' : 'Process mock call'}
-        </button>
-      </section>
+      {syncSummary && (
+        <p className="call-intake__sync">
+          Synced {syncSummary.matched} of {syncSummary.scanned} Plaud files ·
+          {' '}{syncSummary.imported} imported · {syncSummary.skipped} already saved ·
+          {' '}{syncSummary.awaitingTranscript} waiting on transcripts ·
+          {' '}{syncSummary.appointments} appointments · {syncSummary.failed} failed
+        </p>
+      )}
 
       <section className="call-intake__chat">
         <h3>Ask AI about calls from this day</h3>
@@ -113,7 +133,7 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
           <input
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
-            placeholder="Which calls booked water-heater appointments?"
+            placeholder="Which Plaud recordings booked water-heater appointments?"
           />
           <button
             type="button"
@@ -121,7 +141,7 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
             onClick={async () => {
               setAsking(true);
               try {
-                setAnswer(await askVoxrushCalls(selectedDate, question));
+                setAnswer(await askPlaudCalls(selectedDate, question));
               } catch (err) {
                 setError(err instanceof Error ? err.message : String(err));
               } finally {
@@ -136,22 +156,30 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
       </section>
 
       <section className="call-intake__calls">
-        <h3>{calls.length} calls</h3>
+        <h3>{calls.length} recordings</h3>
         {calls.map((call) => (
           <article key={call.id} className="call-intake__call">
             <header>
-              <strong>{call.callerPhone || 'Unknown caller'}</strong>
-              <span>{new Date(call.startedAt).toLocaleString()}</span>
+              <strong>{call.recordingName || call.callerPhone || 'Untitled Plaud recording'}</strong>
+              <span>{call.startedAt ? new Date(call.startedAt).toLocaleString() : ''}</span>
+              {formatDuration(call.durationMs) && <span>{formatDuration(call.durationMs)}</span>}
               <span className={`call-intake__status call-intake__status--${call.status}`}>
-                {call.status}
+                {call.status.replace('_', ' ')}
               </span>
             </header>
-            <p>{call.summary}</p>
+            {call.summary && <p>{call.summary}</p>}
+            {!call.summary && call.plaudSummary && <p>{call.plaudSummary}</p>}
             {call.appointmentMade && (
               <p className="call-intake__appointment">
                 Water-heater appointment detected · Work order: {call.workOrderId}
               </p>
             )}
+            {call.status === 'awaiting_transcript' && (
+              <p className="call-intake__waiting">
+                Plaud has the recording, but the transcript is not ready yet. Sync again after Plaud finishes processing.
+              </p>
+            )}
+            {call.error && <p className="call-intake__error">{call.error}</p>}
             {call.customerServiceTips?.length > 0 && (
               <ul>
                 {call.customerServiceTips.map((tip, index) => (
@@ -159,15 +187,78 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
                 ))}
               </ul>
             )}
-            <details>
-              <summary>Transcript {call.appointmentEvidence?.quote ? '— appointment highlighted' : ''}</summary>
-              <TranscriptWithEvidence call={call} />
-            </details>
+            {call.transcript && (
+              <details>
+                <summary>
+                  Transcript {call.appointmentEvidence?.quote ? '— appointment highlighted' : ''}
+                </summary>
+                <TranscriptWithEvidence call={call} />
+              </details>
+            )}
+            {call.plaudSummary && call.summary && (
+              <details>
+                <summary>Plaud AI summary</summary>
+                <pre className="call-intake__transcript">{call.plaudSummary}</pre>
+              </details>
+            )}
           </article>
         ))}
         {!loading && calls.length === 0 && (
-          <p className="call-intake__empty">No Voxrush calls recorded for this day.</p>
+          <p className="call-intake__empty">
+            No Plaud recordings saved for this day. Record on a Plaud Note, wait for it to sync
+            to Plaud, then click Sync Plaud recordings.
+          </p>
         )}
+      </section>
+
+      <section className="call-intake__mock">
+        <h3>Import a transcript manually</h3>
+        <p>
+          Use this only when a recording is not in Plaud yet. Paste output from
+          {' '}<code>plaud transcript &lt;id&gt;</code> or any call transcript.
+        </p>
+        <label>
+          Recording name (optional)
+          <input value={recordingName} onChange={(event) => setRecordingName(event.target.value)} />
+        </label>
+        <label>
+          Caller phone (optional)
+          <input value={phone} onChange={(event) => setPhone(event.target.value)} />
+        </label>
+        <label>
+          Call transcript
+          <textarea
+            value={transcript}
+            onChange={(event) => setTranscript(event.target.value)}
+            placeholder="Paste a Plaud transcript or a realistic customer scheduling call…"
+          />
+        </label>
+        <button
+          type="button"
+          disabled={submitting || transcript.trim().length < 20}
+          onClick={async () => {
+            setSubmitting(true);
+            setError(null);
+            try {
+              await importPlaudTranscript({
+                transcript,
+                callerPhone: phone,
+                recordingName,
+                startedAt: `${selectedDate}T12:00:00.000Z`,
+              });
+              setTranscript('');
+              setPhone('');
+              setRecordingName('');
+              await reload();
+            } catch (err) {
+              setError(err instanceof Error ? err.message : String(err));
+            } finally {
+              setSubmitting(false);
+            }
+          }}
+        >
+          {submitting ? 'Processing transcript…' : 'Import transcript'}
+        </button>
       </section>
     </div>
   );

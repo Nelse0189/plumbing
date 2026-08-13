@@ -53,26 +53,47 @@ export interface StoredWorkOrder extends WorkOrder {
   cached?: boolean;
 }
 
-export interface VoxrushAppointmentEvidence {
+export interface PlaudAppointmentEvidence {
   quote: string;
   start: number;
   end: number;
 }
 
-export interface VoxrushCall {
+export interface PlaudCall {
   id: string;
   callDate: string;
   startedAt: string;
+  recordingName?: string;
+  durationMs?: number | null;
+  serialNumber?: string;
   callerPhone?: string;
-  direction?: string;
   transcript: string;
+  plaudSummary?: string;
   summary: string;
   customerServiceTips: string[];
   appointmentMade: boolean;
   workOrderId?: string;
-  appointmentEvidence?: VoxrushAppointmentEvidence;
-  status: 'processed' | 'needs_review' | 'failed';
+  appointmentEvidence?: PlaudAppointmentEvidence;
+  status: 'processed' | 'needs_review' | 'failed' | 'awaiting_transcript' | 'processing';
   error?: string;
+  source?: string;
+}
+
+export interface PlaudConnection {
+  connected: boolean;
+  email?: string;
+  name?: string;
+  error?: string;
+}
+
+export interface PlaudSyncSummary {
+  scanned: number;
+  matched: number;
+  imported: number;
+  skipped: number;
+  failed: number;
+  awaitingTranscript: number;
+  appointments: number;
 }
 
 /** 4-hour arrival window shown to the customer (HH:MM, 24h). */

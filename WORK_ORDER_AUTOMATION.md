@@ -138,6 +138,29 @@ VITE_GOOGLE_MAPS_API_KEY=...
 
 `VITE_GOOGLE_MAPS_API_KEY` enables distance ordering from the depot.
 
+## Plaud call intake
+
+The **Calls** tab syncs recordings from a Plaud Note through Plaud's official
+developer API — the same API used by `plaud files` and `plaud transcript`.
+
+1. Install the Plaud CLI: `npm install -g @plaud-ai/cli`
+2. Run `plaud login` and authorize the Plaud account that receives office recordings.
+3. Copy `refresh_token` from `~/.plaud/tokens.json` into Functions env as
+   `PLAUD_REFRESH_TOKEN`.
+4. Deploy functions. The Calls tab can then **Sync Plaud recordings** for the
+   selected day. A scheduled job also pulls the last two days every 15 minutes.
+5. Each recording with a transcript is summarized. If a water-heater appointment
+   was explicitly booked, a work order is created and the confirming transcript
+   wording is highlighted.
+6. Use **Ask AI about calls from this day** to question that day's recordings.
+
+Recordings that have uploaded to Plaud but are still transcribing are stored as
+`awaiting_transcript` and picked up on the next sync. Manual transcript import
+remains available for recordings that are not in Plaud yet.
+
+Do not put Plaud tokens in `VITE_` variables. Rotated refresh tokens are stored
+in the private `plaudAuth/tokens` Firestore document, which is not client-readable.
+
 ## Current limitations
 
 - Image-only/scanned PDFs require OCR; text PDFs are supported now.
