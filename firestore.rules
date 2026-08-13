@@ -29,7 +29,7 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    match /voxrushCalls/{document} {
+    match /plaudCalls/{document} {
       allow read, write: if true;
     }
 

@@ -13,6 +13,44 @@
   align-items: flex-start;
 }
 
+.call-intake__header code,
+.call-intake__mock code {
+  font-size: 0.78em;
+}
+
+.call-intake__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.call-intake__connection {
+  margin-top: 0.55rem;
+  font-size: 0.8rem;
+}
+
+.call-intake__connection.is-connected {
+  color: var(--success);
+}
+
+.call-intake__connection.is-disconnected {
+  color: var(--error);
+}
+
+.call-intake__steps {
+  margin: 0.4rem 0 0.8rem 1.2rem;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.call-intake__sync,
+.call-intake__waiting {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
 .call-intake h2,
 .call-intake h3 {
   color: var(--accent);
@@ -113,7 +151,9 @@
 }
 
 .call-intake__status--needs_review,
-.call-intake__status--failed {
+.call-intake__status--failed,
+.call-intake__status--awaiting_transcript,
+.call-intake__status--processing {
   color: var(--error) !important;
 }
 

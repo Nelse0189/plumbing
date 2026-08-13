@@ -55,8 +55,14 @@ const strGmailClientId = defineString("GMAIL_CLIENT_ID", { default: "" });
 const strGmailRedirectUri = defineString("GMAIL_REDIRECT_URI", {
   default: "http://localhost",
 });
-const strVoxrushWebhookSecret = defineString("VOXRUSH_WEBHOOK_SECRET", {
+const strPlaudRefreshToken = defineString("PLAUD_REFRESH_TOKEN", {
   default: "",
+});
+const strPlaudAccessToken = defineString("PLAUD_ACCESS_TOKEN", {
+  default: "",
+});
+const strPlaudApiBase = defineString("PLAUD_API_BASE", {
+  default: "https://platform.plaud.ai/developer/api",
 });
 
 function makeTwilioClient() {
@@ -1106,7 +1112,7 @@ export const processTeamsChannelImport = onDocumentCreated(
   }
 );
 
-type VoxrushCallAnalysis = {
+type CallTranscriptAnalysis = {
   summary: string;
   customerServiceTips: string[];
   appointmentMade: boolean;
@@ -1121,11 +1127,62 @@ type VoxrushCallAnalysis = {
   confidence: number;
 };
 
+type PlaudFileSummary = {
+  id: string;
+  name?: string;
+  created_at?: string;
+  start_at?: string;
+  duration?: number;
+  serial_number?: string;
+};
+
+type PlaudDataItem = {
+  data_type?: string;
+  data_content?: string;
+};
+
+type PlaudFileDetail = PlaudFileSummary & {
+  presigned_url?: string;
+  source_list?: PlaudDataItem[];
+  note_list?: PlaudDataItem[];
+  transcriptText?: string;
+};
+
+type PlaudSession = {
+  mode: "developer" | "consumer";
+  accessToken: string;
+  apiBase: string;
+  authScheme?: string;
+};
+
+type PlaudSegment = {
+  start_time?: number;
+  end_time?: number;
+  speaker?: string;
+  content?: string;
+  text?: string;
+};
+
+type PlaudSyncResult = {
+  callId: string;
+  status: string;
+  skipped?: boolean;
+  appointmentMade?: boolean;
+  workOrderId?: string;
+};
+
+const PLAUD_REFRESH_URL =
+  "https://platform.plaud.ai/developer/api/oauth/third-party/access-token/refresh";
+const PLAUD_AUTH_DOC = "plaudAuth/tokens";
+const PLAUD_CALLS_COLLECTION = "plaudCalls";
+
 function callDateFromStartedAt(startedAt: string): string {
   const parsed = new Date(startedAt);
-  return Number.isNaN(parsed.getTime())
-    ? new Date().toISOString().slice(0, 10)
-    : parsed.toISOString().slice(0, 10);
+  const timeZone = "America/New_York";
+  if (Number.isNaN(parsed.getTime())) {
+    return new Date().toLocaleDateString("en-CA", { timeZone });
+  }
+  return parsed.toLocaleDateString("en-CA", { timeZone });
 }
 
 function transcriptEvidenceRange(transcript: string, quote: string) {
@@ -1137,10 +1194,550 @@ function transcriptEvidenceRange(transcript: string, quote: string) {
   };
 }
 
-async function analyzeVoxrushTranscript(
-  transcript: string,
-  callId: string
-): Promise<VoxrushCallAnalysis> {
+function formatPlaudClock(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function plaudFileId(value: unknown): string {
+  const record = asRecord(value);
+  return (
+    asTrimmedString(record.id) ||
+    asTrimmedString(record.file_id) ||
+    asTrimmedString(record.fileId)
+  );
+}
+
+const PLAUD_JWT_RE = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
+const PLAUD_COOKIE_TOKEN_NAMES = [
+  "pld_wt",
+  "pld-wt",
+  "wt",
+  "pld_ut",
+  "pld-ut",
+  "pld_token",
+  "tokenstr",
+  "token",
+];
+
+function isPlaudJwt(value: string): boolean {
+  return /^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value);
+}
+
+function firstPlaudJwt(value: string): string {
+  const match = value.match(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
+  return match ? match[0] : "";
+}
+
+function longestPlaudJwt(values: string[]): string {
+  return values
+    .filter(isPlaudJwt)
+    .sort((left, right) => right.length - left.length)[0] || "";
+}
+
+function cookiePairsFromPaste(value: string): Map<string, string> {
+  const pairs = new Map<string, string>();
+  const cookieText = value.replace(/^(cookie)\s*:\s*/i, "");
+  for (const part of cookieText.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq <= 0) continue;
+    const name = part.slice(0, eq).trim().toLowerCase();
+    const raw = part
+      .slice(eq + 1)
+      .trim()
+      .replace(/^["']+|["']+$/g, "");
+    if (name) pairs.set(name, raw);
+  }
+  return pairs;
+}
+
+function extractPlaudJwt(value: string): string {
+  const trimmed = value.trim().replace(/^["']+|["']+$/g, "");
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    const record = asRecord(parsed);
+    const nested = Array.isArray(parsed)
+      ? asRecord(parsed[0])
+      : asRecord(record.list || record.data || record[0]);
+    const fromJson =
+      asTrimmedString(record.workspaceToken) ||
+      asTrimmedString(nested.workspaceToken) ||
+      asTrimmedString(record.access_token) ||
+      asTrimmedString(record.token);
+    if (fromJson) return extractPlaudJwt(fromJson);
+  } catch {
+    // Not JSON; keep scanning the raw paste.
+  }
+
+  const pairs = cookiePairsFromPaste(trimmed);
+  for (const name of PLAUD_COOKIE_TOKEN_NAMES) {
+    const raw = pairs.get(name);
+    if (!raw) continue;
+    const jwt = isPlaudJwt(raw) ? raw : firstPlaudJwt(raw);
+    if (jwt) return jwt;
+  }
+
+  const allJwts = trimmed.match(PLAUD_JWT_RE) || [];
+  const best = longestPlaudJwt(allJwts);
+  if (best) return best;
+
+  const compact = trimmed
+    .replace(/^(cookie|authorization)\s*:\s*/i, "")
+    .replace(/^(bearer|wt|ut|wrt)\s+/i, "")
+    .replace(/\s+/g, "");
+  return firstPlaudJwt(compact) || compact.split(";")[0];
+}
+
+function describePlaudToken(token: string): string {
+  return `${token.length} characters, ${token.split(".").length} parts, starts with "${token.slice(0, 3)}"`;
+}
+
+function normalizePlaudWebToken(value: string): string {
+  return extractPlaudJwt(value);
+}
+
+function plaudConsumerApiBase(value?: string): string {
+  const raw =
+    asTrimmedString(value) ||
+    "https://api.plaud.ai";
+  return raw.replace(/\/$/, "");
+}
+
+function plaudEpochToIso(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    const ms = value < 1e12 ? value * 1000 : value;
+    return new Date(ms).toISOString();
+  }
+  return asTrimmedString(value);
+}
+
+async function getPlaudSession(): Promise<PlaudSession> {
+  const db = admin.firestore();
+  const stored = await db.doc(PLAUD_AUTH_DOC).get();
+  const data = stored.data() || {};
+  const now = Date.now();
+  const storedMode = asTrimmedString(data.mode) === "consumer" ? "consumer" : "developer";
+  const cachedAccess = asTrimmedString(data.accessToken);
+  const cachedExpiry =
+    typeof data.expiresAtMs === "number" ? data.expiresAtMs : 0;
+  if (cachedAccess && (storedMode === "consumer" || cachedExpiry > now + 60_000)) {
+    return {
+      mode: storedMode,
+      accessToken: cachedAccess,
+      authScheme: asTrimmedString(data.authScheme) || (storedMode === "consumer" ? "Bearer" : "Bearer"),
+      apiBase:
+        storedMode === "consumer"
+          ? plaudConsumerApiBase(asTrimmedString(data.apiBase))
+          : strPlaudApiBase.value().replace(/\/$/, ""),
+    };
+  }
+
+  if (storedMode === "consumer" && cachedAccess) {
+    return {
+      mode: "consumer",
+      accessToken: cachedAccess,
+      authScheme: asTrimmedString(data.authScheme) || "Bearer",
+      apiBase: plaudConsumerApiBase(asTrimmedString(data.apiBase)),
+    };
+  }
+
+  const refreshToken =
+    asTrimmedString(data.refreshToken) || strPlaudRefreshToken.value();
+  if (!refreshToken) {
+    const envAccess = strPlaudAccessToken.value();
+    if (envAccess) {
+      return {
+        mode: "developer",
+        accessToken: envAccess,
+        apiBase: strPlaudApiBase.value().replace(/\/$/, ""),
+      };
+    }
+    throw new HttpsError(
+      "failed-precondition",
+      "Plaud is not connected. Sign in at web.plaud.ai and paste the session token on the Calls tab."
+    );
+  }
+
+  const response = await fetch(PLAUD_REFRESH_URL, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ refresh_token: refreshToken }),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new HttpsError(
+      "failed-precondition",
+      `Plaud token refresh failed (${response.status}). Reconnect Plaud from the Calls tab. ${detail.slice(0, 180)}`
+    );
+  }
+  const payload = asRecord(await response.json());
+  const accessToken = asTrimmedString(payload.access_token);
+  if (!accessToken) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Plaud token refresh returned no access token"
+    );
+  }
+  const nextRefresh = asTrimmedString(payload.refresh_token) || refreshToken;
+  const expiresIn =
+    typeof payload.expires_in === "number" ? payload.expires_in : 3600;
+  await db.doc(PLAUD_AUTH_DOC).set(
+    {
+      mode: "developer",
+      accessToken,
+      refreshToken: nextRefresh,
+      expiresAtMs: now + expiresIn * 1000,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+  return {
+    mode: "developer",
+    accessToken,
+    apiBase: strPlaudApiBase.value().replace(/\/$/, ""),
+  };
+}
+
+const PLAUD_WEB_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+function plaudConsumerHeaders(token: string, scheme = "Bearer"): Record<string, string> {
+  return {
+    Authorization: `${scheme} ${token}`,
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    "User-Agent": PLAUD_WEB_USER_AGENT,
+    "app-platform": "web",
+  };
+}
+
+async function plaudFetchJson(
+  apiBase: string,
+  path: string,
+  token: string,
+  scheme: string,
+  init?: { method?: string; body?: string }
+) {
+  const response = await fetch(`${apiBase}${path}`, {
+    method: init?.method || "GET",
+    headers: plaudConsumerHeaders(token, scheme),
+    body: init?.body,
+  });
+  const raw = await response.text();
+  let payload: Record<string, unknown> = {};
+  try {
+    payload = asRecord(JSON.parse(raw || "{}"));
+  } catch {
+    payload = { raw: raw.slice(0, 180) };
+  }
+  return { ok: response.ok, status: response.status, raw, payload };
+}
+
+async function mintPlaudWorkspaceToken(userToken: string, apiBase: string, scheme: string) {
+  const listed = await plaudFetchJson(
+    apiBase,
+    "/team-app/workspaces/list?need_personal_workspace=true",
+    userToken,
+    scheme
+  );
+  const data = asRecord(listed.payload.data);
+  const workspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
+  const personal =
+    workspaces
+      .map((item) => asRecord(item))
+      .find((item) => asTrimmedString(item.workspace_type) === "0") ||
+    asRecord(workspaces[0]);
+  const workspaceId =
+    asTrimmedString(personal.workspace_id) || asTrimmedString(personal.id);
+  if (!listed.ok || !workspaceId) {
+    throw new Error(
+      asTrimmedString(listed.payload.msg) ||
+        `Could not list Plaud workspaces (${listed.status})`
+    );
+  }
+  const minted = await plaudFetchJson(
+    apiBase,
+    `/user-app/auth/workspace/token/${encodeURIComponent(workspaceId)}`,
+    userToken,
+    scheme,
+    { method: "POST", body: "{}" }
+  );
+  const mintedData = asRecord(minted.payload.data);
+  const workspaceToken =
+    asTrimmedString(mintedData.workspace_token) ||
+    asTrimmedString(mintedData.workspaceToken) ||
+    asTrimmedString(mintedData.token) ||
+    asTrimmedString(minted.payload.workspace_token);
+  if (!minted.ok || !workspaceToken) {
+    throw new Error(
+      asTrimmedString(minted.payload.msg) ||
+        `Could not mint Plaud workspace token (${minted.status})`
+    );
+  }
+  return workspaceToken;
+}
+
+async function plaudRequest<T>(path: string, retry = true): Promise<T> {
+  const session = await getPlaudSession();
+  const headers =
+    session.mode === "consumer"
+      ? plaudConsumerHeaders(session.accessToken, session.authScheme || "Bearer")
+      : {
+          Authorization: `Bearer ${session.accessToken}`,
+          Accept: "application/json",
+        };
+  const response = await fetch(`${session.apiBase}${path}`, {
+    headers,
+  });
+  if (response.status === 401 && retry && session.mode === "developer") {
+    await admin.firestore().doc(PLAUD_AUTH_DOC).set(
+      { accessToken: "", expiresAtMs: 0 },
+      { merge: true }
+    );
+    return plaudRequest<T>(path, false);
+  }
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Plaud API ${path} failed (${response.status}): ${detail.slice(0, 180)}`);
+  }
+  return (await response.json()) as T;
+}
+
+function plaudStatusOk(payload: Record<string, unknown>): boolean {
+  const status = payload.status;
+  return status === undefined || status === 0 || status === "0" || status === "success";
+}
+
+async function verifyPlaudWebToken(token: string, apiBase: string) {
+  if (!/^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) {
+    throw new HttpsError(
+      "invalid-argument",
+      `That paste is not a Plaud JWT (${describePlaudToken(token)}). A real token starts with eyJ and has two dots. From the api.plaud.ai request, paste the whole Cookie header or the Authorization value after Bearer.`
+    );
+  }
+  const schemes = ["Bearer", "bearer", "WT", "UT"];
+  let lastDetail = "";
+  for (const scheme of schemes) {
+    const listed = await plaudFetchJson(
+      apiBase,
+      "/file/simple/web?skip=0&limit=1",
+      token,
+      scheme
+    );
+    lastDetail = asTrimmedString(listed.payload.msg) || listed.raw.slice(0, 180);
+    if (listed.ok && plaudStatusOk(listed.payload)) {
+      return { payload: listed.payload, authScheme: scheme, accessToken: token };
+    }
+    try {
+      const workspaceToken = await mintPlaudWorkspaceToken(token, apiBase, scheme);
+      const retry = await plaudFetchJson(
+        apiBase,
+        "/file/simple/web?skip=0&limit=1",
+        workspaceToken,
+        "Bearer"
+      );
+      if (retry.ok && plaudStatusOk(retry.payload)) {
+        return { payload: retry.payload, authScheme: "Bearer", accessToken: workspaceToken };
+      }
+      lastDetail = asTrimmedString(retry.payload.msg) || retry.raw.slice(0, 180);
+    } catch (error) {
+      lastDetail = error instanceof Error ? error.message : lastDetail;
+    }
+  }
+  throw new HttpsError(
+    "invalid-argument",
+    `Plaud rejected that JWT (${describePlaudToken(token)}). ${lastDetail} A 360-character value is usually a user token. Copy the longer Authorization Bearer value from a live api.plaud.ai file request, or paste the user token again after this update so we can mint a workspace token.`
+  );
+}
+
+function plaudFilesFromPage(payload: unknown): PlaudFileSummary[] {
+  const record = asRecord(payload);
+  const data = asRecord(record.data);
+  const raw = Array.isArray(payload)
+    ? payload
+    : Array.isArray(record.data)
+      ? record.data
+      : Array.isArray(record.files)
+        ? record.files
+        : Array.isArray(record.items)
+          ? record.items
+          : Array.isArray(data.files)
+            ? (data.files as unknown[])
+            : Array.isArray(data.data_file_list)
+              ? (data.data_file_list as unknown[])
+              : Array.isArray(data.file_list)
+                ? (data.file_list as unknown[])
+                : Array.isArray(data.list)
+                  ? (data.list as unknown[])
+                  : [];
+  return raw
+    .map((item) => {
+      const file = asRecord(item);
+      const id = plaudFileId(file);
+      if (!id) return null;
+      const startedAt =
+        plaudEpochToIso(file.start_time) ||
+        asTrimmedString(file.start_at) ||
+        asTrimmedString(file.startAt) ||
+        asTrimmedString(file.created_at) ||
+        asTrimmedString(file.createdAt);
+      return {
+        id,
+        name:
+          asTrimmedString(file.name) ||
+          asTrimmedString(file.filename) ||
+          asTrimmedString(file.fullname) ||
+          asTrimmedString(file.file_name) ||
+          undefined,
+        created_at: startedAt || undefined,
+        start_at: startedAt || undefined,
+        duration:
+          typeof file.duration === "number"
+            ? file.duration
+            : Number(file.duration) || undefined,
+        serial_number:
+          asTrimmedString(file.serial_number) ||
+          asTrimmedString(file.serialNumber) ||
+          undefined,
+      } as PlaudFileSummary;
+    })
+    .filter((file): file is PlaudFileSummary => Boolean(file));
+}
+
+async function alreadyIngestedPlaudCall(fileId: string): Promise<PlaudSyncResult | null> {
+  const documentId = `plaud-${fileId}`.slice(0, 700);
+  const existing = await admin.firestore().collection(PLAUD_CALLS_COLLECTION).doc(documentId).get();
+  if (!existing.exists) return null;
+  const previous = existing.data() || {};
+  if (
+    asTrimmedString(previous.transcript).length >= 20 &&
+    (previous.status === "processed" || previous.status === "needs_review")
+  ) {
+    return {
+      callId: fileId,
+      status: asTrimmedString(previous.status) || "processed",
+      skipped: true,
+      appointmentMade: previous.appointmentMade === true,
+      workOrderId: asTrimmedString(previous.workOrderId) || undefined,
+    };
+  }
+  return null;
+}
+
+async function listPlaudFiles(maxPages = 6, pageSize = 50): Promise<PlaudFileSummary[]> {
+  const session = await getPlaudSession();
+  const files: PlaudFileSummary[] = [];
+  if (session.mode === "consumer") {
+    for (let page = 0; page < maxPages; page += 1) {
+      const payload = await plaudRequest<unknown>(
+        `/file/simple/web?skip=${page * pageSize}&limit=${pageSize}`
+      );
+      const batch = plaudFilesFromPage(payload);
+      files.push(...batch);
+      if (batch.length < pageSize) break;
+    }
+    return files;
+  }
+  for (let page = 1; page <= maxPages; page += 1) {
+    const payload = await plaudRequest<unknown>(
+      `/open/third-party/files/?page=${page}&page_size=${pageSize}`
+    );
+    const batch = plaudFilesFromPage(payload);
+    files.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+  return files;
+}
+
+function unwrapPlaudFile(payload: unknown): PlaudFileDetail {
+  const record = asRecord(payload);
+  const nested = asRecord(record.data);
+  const file = plaudFileId(nested) ? nested : record;
+  return {
+    id: plaudFileId(file),
+    name: asTrimmedString(file.name) || undefined,
+    created_at: asTrimmedString(file.created_at) || asTrimmedString(file.createdAt) || undefined,
+    start_at: asTrimmedString(file.start_at) || asTrimmedString(file.startAt) || undefined,
+    duration:
+      typeof file.duration === "number" ? file.duration : Number(file.duration) || undefined,
+    serial_number:
+      asTrimmedString(file.serial_number) ||
+      asTrimmedString(file.serialNumber) ||
+      undefined,
+    presigned_url:
+      asTrimmedString(file.presigned_url) ||
+      asTrimmedString(file.presignedUrl) ||
+      undefined,
+    source_list: Array.isArray(file.source_list)
+      ? (file.source_list as PlaudDataItem[])
+      : Array.isArray(file.sourceList)
+        ? (file.sourceList as PlaudDataItem[])
+        : [],
+    note_list: Array.isArray(file.note_list)
+      ? (file.note_list as PlaudDataItem[])
+      : Array.isArray(file.noteList)
+        ? (file.noteList as PlaudDataItem[])
+        : [],
+  };
+}
+
+function segmentsToTranscript(segments: unknown[]): string {
+  return segments
+    .map((item) => {
+      const seg = asRecord(item) as PlaudSegment;
+      const content = asTrimmedString(seg.content) || asTrimmedString(seg.text);
+      if (!content) return "";
+      const speaker = asTrimmedString(seg.speaker);
+      return `[${formatPlaudClock(Number(seg.start_time) || 0)} - ${formatPlaudClock(Number(seg.end_time) || 0)}] ${
+        speaker ? `${speaker}: ` : ""
+      }${content}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function plaudTranscriptFromDetail(detail: PlaudFileDetail): string {
+  if (asTrimmedString(detail.transcriptText)) {
+    return asTrimmedString(detail.transcriptText);
+  }
+  const items = detail.source_list || [];
+  const transaction =
+    items.find((item) => asTrimmedString(item.data_type) === "transaction") || items[0];
+  const raw = asTrimmedString(transaction?.data_content);
+  if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      return segmentsToTranscript(parsed);
+    }
+    const record = asRecord(parsed);
+    return asTrimmedString(record.text) || raw;
+  } catch {
+    return raw;
+  }
+}
+
+function plaudSummaryFromDetail(detail: PlaudFileDetail): string {
+  const notes = detail.note_list || [];
+  return asTrimmedString(
+    notes.find((item) => asTrimmedString(item.data_type) === "auto_sum_note")?.data_content
+  );
+}
+
+async function analyzeCallTranscript(
+  transcript: string
+): Promise<CallTranscriptAnalysis> {
   if (!strOpenAiApiKey.value()) {
     throw new HttpsError("failed-precondition", "OPENAI_API_KEY is not configured");
   }
@@ -1159,7 +1756,7 @@ async function analyzeVoxrushTranscript(
     response_format: {
       type: "json_schema",
       json_schema: {
-        name: "voxrush_call_analysis",
+        name: "plaud_call_analysis",
         strict: true,
         schema: {
           type: "object",
@@ -1198,47 +1795,80 @@ async function analyzeVoxrushTranscript(
   });
   const content = response.choices[0]?.message.content;
   if (!content) throw new Error("OpenAI returned an empty call analysis");
-  return parseJsonObject(content) as unknown as VoxrushCallAnalysis;
+  return parseJsonObject(content) as unknown as CallTranscriptAnalysis;
 }
 
-async function ingestVoxrushCallRecord(input: {
+async function ingestPlaudCallRecord(input: {
   callId: string;
   transcript: string;
   startedAt?: string;
   callerPhone?: string;
-  direction?: string;
-  mock?: boolean;
-}) {
+  recordingName?: string;
+  durationMs?: number;
+  serialNumber?: string;
+  plaudSummary?: string;
+  source?: string;
+}): Promise<PlaudSyncResult> {
   const callId = asTrimmedString(input.callId);
   const transcript = asTrimmedString(input.transcript);
-  if (!callId || transcript.length < 20) {
-    throw new HttpsError(
-      "invalid-argument",
-      "A call ID and readable transcript are required"
-    );
+  if (!callId) {
+    throw new HttpsError("invalid-argument", "A Plaud recording ID is required");
   }
   const startedAt = asTrimmedString(input.startedAt) || new Date().toISOString();
   const callDate = callDateFromStartedAt(startedAt);
   const db = admin.firestore();
-  const callRef = db.collection("voxrushCalls").doc(`voxrush-${callId}`);
+  const documentId = `plaud-${callId}`.slice(0, 700);
+  const callRef = db.collection(PLAUD_CALLS_COLLECTION).doc(documentId);
+  const existing = await callRef.get();
+  const previous = existing.data() || {};
+  if (
+    existing.exists &&
+    transcript.length >= 20 &&
+    asTrimmedString(previous.transcript) === transcript &&
+    (previous.status === "processed" || previous.status === "needs_review")
+  ) {
+    return {
+      callId,
+      status: asTrimmedString(previous.status) || "processed",
+      skipped: true,
+      appointmentMade: previous.appointmentMade === true,
+      workOrderId: asTrimmedString(previous.workOrderId) || undefined,
+    };
+  }
+
   await callRef.set(
     {
       callId,
       callDate,
       startedAt,
+      recordingName: asTrimmedString(input.recordingName) || asTrimmedString(previous.recordingName),
+      durationMs:
+        typeof input.durationMs === "number"
+          ? input.durationMs
+          : typeof previous.durationMs === "number"
+            ? previous.durationMs
+            : null,
+      serialNumber: asTrimmedString(input.serialNumber) || asTrimmedString(previous.serialNumber),
       callerPhone: normalizeUsPhone(asTrimmedString(input.callerPhone)),
-      direction: asTrimmedString(input.direction) || "inbound",
       transcript,
-      status: "processing",
-      source: input.mock ? "mock-voxrush" : "voxrush",
+      plaudSummary: asTrimmedString(input.plaudSummary),
+      status: transcript.length >= 20 ? "processing" : "awaiting_transcript",
+      source: asTrimmedString(input.source) || "plaud",
+      error: admin.firestore.FieldValue.delete(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: existing.exists
+        ? previous.createdAt || admin.firestore.FieldValue.serverTimestamp()
+        : admin.firestore.FieldValue.serverTimestamp(),
     },
     { merge: true }
   );
 
+  if (transcript.length < 20) {
+    return { callId, status: "awaiting_transcript" };
+  }
+
   try {
-    const analysis = await analyzeVoxrushTranscript(transcript, callId);
+    const analysis = await analyzeCallTranscript(transcript);
     const evidence = transcriptEvidenceRange(
       transcript,
       asTrimmedString(analysis.appointmentEvidenceQuote)
@@ -1246,10 +1876,10 @@ async function ingestVoxrushCallRecord(input: {
     const appointmentMade =
       analysis.appointmentMade === true &&
       Boolean(analysis.appointmentDate && analysis.appointmentTime && evidence.quote);
-    const workOrderId = `voxrush-${callId}`.slice(0, 700);
+    const workOrderId = documentId;
     const workOrder: WorkOrderRecord = {
       workOrderNumber:
-        asTrimmedString(analysis.workOrderNumber) || `VOXRUSH-${callId.slice(-8)}`,
+        asTrimmedString(analysis.workOrderNumber) || `PLAUD-${callId.slice(-8)}`,
       customerName: asTrimmedString(analysis.customerName),
       phone: normalizeUsPhone(
         asTrimmedString(analysis.phone) || asTrimmedString(input.callerPhone)
@@ -1258,8 +1888,15 @@ async function ingestVoxrushCallRecord(input: {
       jobType: asTrimmedString(analysis.jobType) || "Water heater appointment",
       appointmentDate: appointmentMade ? asTrimmedString(analysis.appointmentDate) : "",
       appointmentTime: appointmentMade ? asTrimmedString(analysis.appointmentTime) : "",
-      notes: asTrimmedString(analysis.summary),
-      sourceFileName: `voxrush-call-${callId}`,
+      notes: [
+        asTrimmedString(input.recordingName)
+          ? `Plaud recording: ${asTrimmedString(input.recordingName)}`
+          : "",
+        asTrimmedString(analysis.summary),
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      sourceFileName: asTrimmedString(input.recordingName) || `plaud-${callId}`,
       smsConsent: false,
       confidence:
         typeof analysis.confidence === "number" ? analysis.confidence : undefined,
@@ -1272,8 +1909,8 @@ async function ingestVoxrushCallRecord(input: {
       {
         ...workOrder,
         status,
-        source: "voxrush_call",
-        voxrushCallId: callId,
+        source: "plaud_call",
+        plaudCallId: callId,
         callSummary: asTrimmedString(analysis.summary),
         customerServiceTips: Array.isArray(analysis.customerServiceTips)
           ? analysis.customerServiceTips.map(asTrimmedString).filter(Boolean)
@@ -1288,7 +1925,9 @@ async function ingestVoxrushCallRecord(input: {
       {
         status: appointmentMade ? "processed" : "needs_review",
         summary: asTrimmedString(analysis.summary),
-        customerServiceTips: analysis.customerServiceTips,
+        customerServiceTips: Array.isArray(analysis.customerServiceTips)
+          ? analysis.customerServiceTips.map(asTrimmedString).filter(Boolean)
+          : [],
         appointmentMade,
         workOrderId,
         appointmentEvidence: evidence,
@@ -1296,7 +1935,12 @@ async function ingestVoxrushCallRecord(input: {
       },
       { merge: true }
     );
-    return { callId, workOrderId, appointmentMade, status, evidence };
+    return {
+      callId,
+      workOrderId,
+      appointmentMade,
+      status: appointmentMade ? "processed" : "needs_review",
+    };
   } catch (error) {
     await callRef.set(
       {
@@ -1310,62 +1954,271 @@ async function ingestVoxrushCallRecord(input: {
   }
 }
 
-/** Mock entry point until Voxrush webhook details are available. */
-export const mockVoxrushCall = onCall({ cors: true, timeoutSeconds: 120 }, async (request) => {
-  const input = request.data as {
-    callId?: unknown;
-    transcript?: unknown;
-    startedAt?: unknown;
-    callerPhone?: unknown;
-    direction?: unknown;
+function unwrapConsumerFile(payload: unknown): PlaudFileDetail {
+  const record = asRecord(payload);
+  const file = asRecord(record.data);
+  const source = plaudFileId(file) ? file : record;
+  const trans = asRecord(source.trans_result);
+  const segments = Array.isArray(trans.segments)
+    ? trans.segments
+    : Array.isArray(source.segments)
+      ? source.segments
+      : [];
+  const startedAt =
+    plaudEpochToIso(source.start_time) ||
+    asTrimmedString(source.start_at) ||
+    asTrimmedString(source.created_at);
+  return {
+    id: plaudFileId(source),
+    name:
+      asTrimmedString(source.filename) ||
+      asTrimmedString(source.file_name) ||
+      asTrimmedString(source.name) ||
+      asTrimmedString(source.fullname) ||
+      undefined,
+    created_at: startedAt || undefined,
+    start_at: startedAt || undefined,
+    duration:
+      typeof source.duration === "number" ? source.duration : Number(source.duration) || undefined,
+    serial_number:
+      asTrimmedString(source.serial_number) ||
+      asTrimmedString(source.serialNumber) ||
+      undefined,
+    source_list: [],
+    note_list: [],
+    transcriptText:
+      segmentsToTranscript(segments) ||
+      asTrimmedString(trans.text) ||
+      asTrimmedString(source.transcript),
   };
-  return ingestVoxrushCallRecord({
-    callId: asTrimmedString(input.callId) || `mock-${Date.now()}`,
-    transcript: asTrimmedString(input.transcript),
-    startedAt: asTrimmedString(input.startedAt),
-    callerPhone: asTrimmedString(input.callerPhone),
-    direction: asTrimmedString(input.direction),
-    mock: true,
+}
+
+async function fetchPlaudFileDetail(fileId: string): Promise<PlaudFileDetail> {
+  const session = await getPlaudSession();
+  if (session.mode === "consumer") {
+    return unwrapConsumerFile(
+      await plaudRequest<unknown>(`/file/detail/${encodeURIComponent(fileId)}`)
+    );
+  }
+  return unwrapPlaudFile(
+    await plaudRequest<unknown>(`/open/third-party/files/${encodeURIComponent(fileId)}`)
+  );
+}
+
+async function ingestPlaudFile(file: PlaudFileSummary): Promise<PlaudSyncResult> {
+  const detail = await fetchPlaudFileDetail(file.id);
+  const startedAt =
+    asTrimmedString(detail.start_at) ||
+    asTrimmedString(detail.created_at) ||
+    asTrimmedString(file.start_at) ||
+    asTrimmedString(file.created_at);
+  return ingestPlaudCallRecord({
+    callId: detail.id || file.id,
+    transcript: plaudTranscriptFromDetail(detail),
+    startedAt,
+    recordingName: asTrimmedString(detail.name) || asTrimmedString(file.name),
+    durationMs: detail.duration ?? file.duration,
+    serialNumber: asTrimmedString(detail.serial_number) || asTrimmedString(file.serial_number),
+    plaudSummary: plaudSummaryFromDetail(detail),
+    source: "plaud",
   });
-});
+}
 
-/** Voxrush webhook stub: replace payload mapping/signature with vendor specs. */
-export const ingestVoxrushCall = onRequest({ cors: false }, async (req, res) => {
-  const expectedSecret = strVoxrushWebhookSecret.value();
-  if (
-    expectedSecret &&
-    asTrimmedString(req.header("x-voxrush-webhook-secret")) !== expectedSecret
-  ) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
+function fileMatchesPlaudWindow(
+  file: PlaudFileSummary,
+  options: { date?: string; days?: number; allTime?: boolean }
+): boolean {
+  if (options.allTime) return true;
+  const startedAt =
+    asTrimmedString(file.start_at) || asTrimmedString(file.created_at);
+  if (options.date) {
+    return callDateFromStartedAt(startedAt) === options.date;
   }
-  const body = (req.body || {}) as Record<string, unknown>;
+  const parsed = new Date(startedAt);
+  if (Number.isNaN(parsed.getTime())) return false;
+  const days = options.days ?? 2;
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  return parsed.getTime() >= cutoff;
+}
+
+async function syncPlaudRecordings(options: {
+  date?: string;
+  days?: number;
+  allTime?: boolean;
+}) {
+  const files = await listPlaudFiles(options.allTime ? 100 : 6);
+  const matched = files.filter((file) => fileMatchesPlaudWindow(file, options));
+  const results: PlaudSyncResult[] = [];
+  for (const file of matched) {
+    try {
+      const existing = await alreadyIngestedPlaudCall(file.id);
+      if (existing) {
+        results.push(existing);
+        continue;
+      }
+      results.push(await ingestPlaudFile(file));
+    } catch (error) {
+      console.error(`Plaud ingest failed for ${file.id}:`, error);
+      results.push({
+        callId: file.id,
+        status: "failed",
+      });
+    }
+  }
+  return {
+    scanned: files.length,
+    matched: matched.length,
+    imported: results.filter((item) => !item.skipped && item.status !== "failed").length,
+    skipped: results.filter((item) => item.skipped).length,
+    failed: results.filter((item) => item.status === "failed").length,
+    awaitingTranscript: results.filter((item) => item.status === "awaiting_transcript").length,
+    appointments: results.filter((item) => item.appointmentMade).length,
+    scope: options.allTime ? "all-time" : options.date || `${options.days ?? 2}-days`,
+    results,
+  };
+}
+
+export const getPlaudConnection = onCall({ cors: true }, async () => {
   try {
-    const result = await ingestVoxrushCallRecord({
-      callId: asTrimmedString(body.callId) || asTrimmedString(body.id),
-      transcript: asTrimmedString(body.transcript),
-      startedAt: asTrimmedString(body.startedAt),
-      callerPhone: asTrimmedString(body.callerPhone),
-      direction: asTrimmedString(body.direction),
-    });
-    res.status(202).json(result);
+    const session = await getPlaudSession();
+    if (session.mode === "consumer") {
+      const payload = asRecord(
+        await plaudRequest<unknown>("/file/simple/web?skip=0&limit=1")
+      );
+      const files = plaudFilesFromPage(payload);
+      return {
+        connected: true,
+        mode: "web",
+        name: files[0]?.name ? "Plaud web account" : "Plaud web account",
+      };
+    }
+    const payload = asRecord(await plaudRequest<unknown>("/open/third-party/users/current"));
+    const user = plaudFileId(asRecord(payload.data)) ? asRecord(payload.data) : payload;
+    return {
+      connected: true,
+      mode: "cli",
+      email:
+        asTrimmedString(user.email) ||
+        asTrimmedString(user.user_email) ||
+        asTrimmedString(user.userEmail),
+      name:
+        asTrimmedString(user.name) ||
+        asTrimmedString(user.nickname) ||
+        asTrimmedString(user.display_name),
+    };
   } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    return {
+      connected: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 });
 
-export const listVoxrushCalls = onCall({ cors: true }, async (request) => {
+export const connectPlaudWebSession = onCall({ cors: true }, async (request) => {
+  const input = request.data as { token?: unknown; apiBase?: unknown };
+  const token = normalizePlaudWebToken(asTrimmedString(input.token));
+  const apiBase = plaudConsumerApiBase(asTrimmedString(input.apiBase));
+  if (token.length < 80) {
+    throw new HttpsError(
+      "invalid-argument",
+      `That paste is too short to be a Plaud token (${describePlaudToken(token)}). workspaceId and token_id are not the token. From the api.plaud.ai request, paste the whole Cookie line or the long eyJ... value after Bearer.`
+    );
+  }
+  const verified = await verifyPlaudWebToken(token, apiBase);
+  await admin.firestore().doc(PLAUD_AUTH_DOC).set(
+    {
+      mode: "consumer",
+      accessToken: verified.accessToken,
+      authScheme: verified.authScheme,
+      apiBase,
+      refreshToken: "",
+      expiresAtMs: Date.now() + 30 * 24 * 60 * 60 * 1000,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+  return { connected: true, mode: "web" };
+});
+
+export const syncPlaudCalls = onCall(
+  { cors: true, timeoutSeconds: 3600, memory: "1GiB" },
+  async (request) => {
+    const input = request.data as {
+      date?: unknown;
+      days?: unknown;
+      allTime?: unknown;
+    };
+    const allTime = input.allTime === true;
+    const date = asTrimmedString(input.date);
+    const days = typeof input.days === "number" ? input.days : undefined;
+    if (!allTime && !date && !days) {
+      throw new HttpsError("invalid-argument", "Provide a date, a day count, or allTime");
+    }
+    return syncPlaudRecordings({ date: date || undefined, days, allTime });
+  }
+);
+
+export const syncPlaudCallsScheduled = onSchedule(
+  {
+    schedule: "every 15 minutes",
+    timeZone: "America/New_York",
+    timeoutSeconds: 540,
+    memory: "1GiB",
+  },
+  async () => {
+    const stored = await admin.firestore().doc(PLAUD_AUTH_DOC).get();
+    const storedTokens = stored.data() || {};
+    const hasStoredToken = Boolean(
+      asTrimmedString(storedTokens.refreshToken) || asTrimmedString(storedTokens.accessToken)
+    );
+    if (!strPlaudRefreshToken.value() && !strPlaudAccessToken.value() && !hasStoredToken) {
+      console.log("Plaud sync skipped: no Plaud token configured");
+      return;
+    }
+    const result = await syncPlaudRecordings({ days: 2 });
+    console.log("Plaud scheduled sync", result);
+  }
+);
+
+export const importPlaudTranscript = onCall(
+  { cors: true, timeoutSeconds: 120 },
+  async (request) => {
+    const input = request.data as {
+      callId?: unknown;
+      transcript?: unknown;
+      startedAt?: unknown;
+      callerPhone?: unknown;
+      recordingName?: unknown;
+    };
+    return ingestPlaudCallRecord({
+      callId: asTrimmedString(input.callId) || `manual-${Date.now()}`,
+      transcript: asTrimmedString(input.transcript),
+      startedAt: asTrimmedString(input.startedAt),
+      callerPhone: asTrimmedString(input.callerPhone),
+      recordingName: asTrimmedString(input.recordingName) || "Manual Plaud import",
+      source: "plaud-manual",
+    });
+  }
+);
+
+export const listPlaudCalls = onCall({ cors: true }, async (request) => {
   const date = asTrimmedString((request.data as { date?: unknown }).date);
   const snapshot = await admin
     .firestore()
-    .collection("voxrushCalls")
+    .collection(PLAUD_CALLS_COLLECTION)
     .where("callDate", "==", date)
     .limit(100)
     .get();
-  return snapshot.docs.map((document) => ({ id: document.id, ...document.data() }));
+  return snapshot.docs
+    .map((document) => ({ id: document.id, ...document.data() }))
+    .sort((left, right) =>
+      asTrimmedString((right as { startedAt?: unknown }).startedAt).localeCompare(
+        asTrimmedString((left as { startedAt?: unknown }).startedAt)
+      )
+    );
 });
 
-export const askVoxrushCalls = onCall({ cors: true, timeoutSeconds: 120 }, async (request) => {
+export const askPlaudCalls = onCall({ cors: true, timeoutSeconds: 120 }, async (request) => {
   const input = request.data as { date?: unknown; question?: unknown };
   const date = asTrimmedString(input.date);
   const question = asTrimmedString(input.question);
@@ -1374,14 +2227,22 @@ export const askVoxrushCalls = onCall({ cors: true, timeoutSeconds: 120 }, async
   }
   const calls = await admin
     .firestore()
-    .collection("voxrushCalls")
+    .collection(PLAUD_CALLS_COLLECTION)
     .where("callDate", "==", date)
     .limit(100)
     .get();
   const context = calls.docs
     .map((document) => {
       const data = document.data();
-      return `CALL ${document.id}\nSUMMARY: ${asTrimmedString(data.summary)}\nTRANSCRIPT:\n${asTrimmedString(data.transcript)}`;
+      return [
+        `CALL ${document.id}`,
+        `NAME: ${asTrimmedString(data.recordingName) || "Untitled Plaud recording"}`,
+        `STARTED: ${asTrimmedString(data.startedAt)}`,
+        `APPOINTMENT: ${data.appointmentMade === true ? "yes" : "no"}`,
+        `PLAUD SUMMARY: ${asTrimmedString(data.plaudSummary)}`,
+        `DISPATCH SUMMARY: ${asTrimmedString(data.summary)}`,
+        `TRANSCRIPT:\n${asTrimmedString(data.transcript)}`,
+      ].join("\n");
     })
     .join("\n\n---\n\n")
     .slice(0, 100000);
@@ -1394,7 +2255,7 @@ export const askVoxrushCalls = onCall({ cors: true, timeoutSeconds: 120 }, async
       {
         role: "system",
         content:
-          "Answer questions about the supplied plumbing call records for one day. Use only the records. Be concise, identify call IDs when relevant, and say when information is missing.",
+          "Answer questions about the supplied plumbing Plaud call records for one day. Use only the records. Be concise, identify recording names or call IDs when relevant, and say when information is missing.",
       },
       { role: "user", content: `QUESTION: ${question}\n\nCALL RECORDS:\n${context}` },
     ],

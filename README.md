@@ -11,6 +11,7 @@ A modern scheduling website for plumbing companies built with Vite + React, feat
 - 🔍 **Address Geocoding**: Automatically converts addresses to map coordinates
 - 📱 **SMS Scheduling**: Automatically schedule appointments via SMS using Twilio and Gemini AI
 - ⏰ **Reminder System**: Automatic SMS reminders sent 1 hour before appointments
+- 🎙️ **Plaud Call Intake**: Sync Plaud Note recordings, highlight booked appointments, and ask AI about the day's calls
 
 ## Setup
 
