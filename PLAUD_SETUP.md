@@ -13,10 +13,17 @@ Plaud's official CLI login currently shows a broken page with labels like
 2. In Edge, open Developer tools with **Ctrl+Shift+I**, right-click → **Inspect**,
    or **Fn+F12**. Or use ⋯ → More tools → Developer tools.
 3. Open the **Application** tab.
-4. Local Storage → `https://web.plaud.ai` → copy `tokenstr`.
-5. If `tokenstr` is missing, Cookies → `https://api.plaud.ai` → copy `pld_ut`.
-6. If Developer tools are blocked: Edge Settings → Cookies and site data →
-   See all site data → search `plaud` → `api.plaud.ai` → copy `pld_ut`.
+4. Ignore `pld_sessionMeta` / `token_id`. Those are not the login token.
+5. Local Storage → `https://web.plaud.ai` → open the key that ends with
+   `:workspaceList` → copy `workspaceToken`.
+6. Or in the Console tab run:
+
+   ```js
+   const key = Object.keys(localStorage).find(k => k.endsWith(':workspaceList'));
+   const list = JSON.parse(localStorage.getItem(key) || '[]');
+   copy(list[0].workspaceToken);
+   ```
+
 7. On the dispatch **Calls** tab, paste that value and click **Connect Plaud account**.
 
 Do not paste the token into chat. The Calls tab stores it in a private

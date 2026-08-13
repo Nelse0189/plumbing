@@ -138,12 +138,23 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
               laptops use <strong>Fn+F12</strong>. Or open the ⋯ menu → More tools → Developer tools.
             </li>
             <li>Click the <strong>Application</strong> tab. If you do not see it, click the <strong>&gt;&gt;</strong> overflow.</li>
-            <li>Local Storage → <code>https://web.plaud.ai</code> → copy <code>tokenstr</code>.</li>
-            <li>If <code>tokenstr</code> is missing, open Cookies → <code>https://api.plaud.ai</code> and copy <code>pld_ut</code>.</li>
             <li>
-              If Developer tools are blocked, go to Edge Settings → Cookies and site
-              data → See all site data → search <code>plaud</code> → open
-              <code>api.plaud.ai</code> → copy the <code>pld_ut</code> cookie value.
+              Skip <code>pld_sessionMeta</code> and <code>token_id</code> — those are not the login token.
+              In Local Storage → <code>https://web.plaud.ai</code>, find a key that
+              <strong>ends with</strong> <code>:workspaceList</code>.
+            </li>
+            <li>
+              Open that value and copy <code>workspaceToken</code> only. Or use the
+              <strong>Console</strong> tab and run:
+              <pre className="call-intake__transcript">{`const key = Object.keys(localStorage).find(k => k.endsWith(':workspaceList'));
+const list = JSON.parse(localStorage.getItem(key) || '[]');
+copy(list[0].workspaceToken);`}</pre>
+              That copies the token to your clipboard without showing it.
+            </li>
+            <li>
+              Alternative: Network tab → refresh the page → click a request to
+              <code>api.plaud.ai</code> → Request Headers → copy the
+              <code>Authorization</code> value after <code>Bearer</code>.
             </li>
           </ol>
           <label>
