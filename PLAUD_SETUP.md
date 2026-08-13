@@ -18,6 +18,14 @@ npx -y @plaud-ai/cli me
 npx -y @plaud-ai/cli today
 ```
 
+On Windows PowerShell, `npx` can fail with `PSSecurityException` because
+script execution is disabled. Use Command Prompt, or call the `.cmd` shim:
+
+```bat
+npx.cmd -y @plaud-ai/cli login
+npx.cmd -y @plaud-ai/cli me
+```
+
 If you prefer a local install instead of `npx`:
 
 ```bash

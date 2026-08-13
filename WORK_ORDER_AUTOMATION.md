@@ -145,7 +145,8 @@ developer API — the same API used by `plaud files` and `plaud transcript`.
 
 1. On your computer (not the Cloud Agent terminal), run
    `npx -y @plaud-ai/cli login` and authorize the Plaud account that receives
-   office recordings. Do not use `npm install -g`; that often fails with `EACCES`.
+   office recordings. On Windows PowerShell use `npx.cmd` instead of `npx`.
+   Do not use `npm install -g`; that often fails with `EACCES`.
 2. Copy `refresh_token` from `~/.plaud/tokens.json` into Functions env as
    `PLAUD_REFRESH_TOKEN`.
 3. Deploy functions. The Calls tab can then **Sync Plaud recordings** for the
