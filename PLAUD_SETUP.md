@@ -10,10 +10,14 @@ Plaud's official CLI login currently shows a broken page with labels like
 `oauth_bind_device_title`. Use the normal Plaud website instead:
 
 1. Open https://web.plaud.ai and sign in as usual.
-2. Press F12 → **Application**.
-3. Local Storage → `https://web.plaud.ai` → copy `tokenstr`.
-4. If `tokenstr` is missing, Cookies → `https://api.plaud.ai` → copy `pld_ut`.
-5. On the dispatch **Calls** tab, paste that value and click **Connect Plaud account**.
+2. In Edge, open Developer tools with **Ctrl+Shift+I**, right-click → **Inspect**,
+   or **Fn+F12**. Or use ⋯ → More tools → Developer tools.
+3. Open the **Application** tab.
+4. Local Storage → `https://web.plaud.ai` → copy `tokenstr`.
+5. If `tokenstr` is missing, Cookies → `https://api.plaud.ai` → copy `pld_ut`.
+6. If Developer tools are blocked: Edge Settings → Cookies and site data →
+   See all site data → search `plaud` → `api.plaud.ai` → copy `pld_ut`.
+7. On the dispatch **Calls** tab, paste that value and click **Connect Plaud account**.
 
 Do not paste the token into chat. The Calls tab stores it in a private
 Firestore document used only by Cloud Functions.

@@ -132,10 +132,19 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
           </p>
           <ol className="call-intake__steps">
             <li>Open <a href="https://web.plaud.ai" target="_blank" rel="noreferrer">https://web.plaud.ai</a> and sign in as usual.</li>
-            <li>Press F12, then open <strong>Application</strong>.</li>
+            <li>
+              In Edge, open Developer tools with <strong>Ctrl+Shift+I</strong>, or
+              right-click the page and choose <strong>Inspect</strong>. On many
+              laptops use <strong>Fn+F12</strong>. Or open the ⋯ menu → More tools → Developer tools.
+            </li>
+            <li>Click the <strong>Application</strong> tab. If you do not see it, click the <strong>&gt;&gt;</strong> overflow.</li>
             <li>Local Storage → <code>https://web.plaud.ai</code> → copy <code>tokenstr</code>.</li>
             <li>If <code>tokenstr</code> is missing, open Cookies → <code>https://api.plaud.ai</code> and copy <code>pld_ut</code>.</li>
-            <li>If you see <code>plaud_user_api_domain</code>, paste that into API base below.</li>
+            <li>
+              If Developer tools are blocked, go to Edge Settings → Cookies and site
+              data → See all site data → search <code>plaud</code> → open
+              <code>api.plaud.ai</code> → copy the <code>pld_ut</code> cookie value.
+            </li>
           </ol>
           <label>
             Plaud web token
