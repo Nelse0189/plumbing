@@ -141,8 +141,11 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
               Easiest path: open the <strong>Network</strong> tab, refresh
               https://web.plaud.ai, click a request whose URL contains
               <code>api.plaud.ai</code>, then open <strong>Headers</strong> →
-              Request Headers → copy the value after <code>Bearer</code> in
-              <code>Authorization</code>.
+              Request Headers. Prefer <code>Authorization</code> and copy the
+              value after <code>Bearer</code>. Skip the whole <code>Cookie</code>
+              line. If you only have Cookie, copy just the one value that starts
+              with <code>eyJ</code> (often <code>pld_ut</code>), from after
+              <code>=</code> up to but not including the next <code>;</code>.
             </li>
             <li>
               <code>workspaceId</code> inside <code>pld_sessionMeta</code> is not
