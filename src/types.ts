@@ -95,6 +95,7 @@ export interface PlaudSyncSummary {
   failed: number;
   awaitingTranscript: number;
   appointments: number;
+  scope?: string;
 }
 
 /** 4-hour arrival window shown to the customer (HH:MM, 24h). */

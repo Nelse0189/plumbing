@@ -45,7 +45,8 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
   const [phone, setPhone] = useState('');
   const [recordingName, setRecordingName] = useState('');
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
+  const [syncMode, setSyncMode] = useState<'day' | 'all' | null>(null);
+  const syncing = syncMode !== null;
   const [submitting, setSubmitting] = useState(false);
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
@@ -86,8 +87,9 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
           <p>
             Recordings sync from your Plaud Note through the same API as
             {' '}<code>plaud files</code> and <code>plaud transcript</code>.
-            New calls are summarized, and water-heater appointments are turned
-            into work orders with the confirming transcript highlighted.
+            <strong> Sync this day</strong> imports only the selected date.
+            <strong> Sync all time</strong> imports every recording; already
+            saved calls are skipped. This list still shows the selected day.
           </p>
           <p className={`call-intake__connection ${connection?.connected ? 'is-connected' : 'is-disconnected'}`}>
             {connection?.connected
@@ -100,7 +102,7 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
             type="button"
             disabled={syncing || !connection?.connected}
             onClick={async () => {
-              setSyncing(true);
+              setSyncMode('day');
               setError(null);
               try {
                 const summary = await syncPlaudCalls({ date: selectedDate });
@@ -109,11 +111,37 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
               } catch (err) {
                 setError(err instanceof Error ? err.message : String(err));
               } finally {
-                setSyncing(false);
+                setSyncMode(null);
               }
             }}
           >
-            {syncing ? 'Syncing Plaud…' : 'Sync Plaud recordings'}
+            {syncMode === 'day' ? 'Syncing this day…' : 'Sync this day'}
+          </button>
+          <button
+            type="button"
+            disabled={syncing || !connection?.connected}
+            onClick={async () => {
+              if (
+                !window.confirm(
+                  'Sync every Plaud recording, not just this day? Already saved calls are skipped. This can take several minutes.'
+                )
+              ) {
+                return;
+              }
+              setSyncMode('all');
+              setError(null);
+              try {
+                const summary = await syncPlaudCalls({ allTime: true });
+                setSyncSummary(summary);
+                await reload();
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setSyncMode(null);
+              }
+            }}
+          >
+            {syncMode === 'all' ? 'Syncing all time…' : 'Sync all time'}
           </button>
           <button type="button" disabled={loading} onClick={() => void reload()}>
             {loading ? 'Loading…' : 'Refresh calls'}
@@ -242,10 +270,16 @@ console.log('click a Plaud recording now');`}</pre>
 
       {syncSummary && (
         <p className="call-intake__sync">
-          Synced {syncSummary.matched} of {syncSummary.scanned} Plaud files ·
+          {syncSummary.scope === 'all-time'
+            ? 'Synced all Plaud recordings'
+            : `Synced ${syncSummary.scope || selectedDate}`}
+          {' '}· {syncSummary.matched} of {syncSummary.scanned} files ·
           {' '}{syncSummary.imported} imported · {syncSummary.skipped} already saved ·
           {' '}{syncSummary.awaitingTranscript} waiting on transcripts ·
-          {' '}{syncSummary.appointments} appointments · {syncSummary.failed} failed
+          {' '}{syncSummary.appointments} appointments · {syncSummary.failed} failed.
+          {syncSummary.scope === 'all-time'
+            ? ' This list still shows the selected day — change the date to see older calls.'
+            : ''}
         </p>
       )}
 

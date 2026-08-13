@@ -1615,6 +1615,26 @@ function plaudFilesFromPage(payload: unknown): PlaudFileSummary[] {
     .filter((file): file is PlaudFileSummary => Boolean(file));
 }
 
+async function alreadyIngestedPlaudCall(fileId: string): Promise<PlaudSyncResult | null> {
+  const documentId = `plaud-${fileId}`.slice(0, 700);
+  const existing = await admin.firestore().collection(PLAUD_CALLS_COLLECTION).doc(documentId).get();
+  if (!existing.exists) return null;
+  const previous = existing.data() || {};
+  if (
+    asTrimmedString(previous.transcript).length >= 20 &&
+    (previous.status === "processed" || previous.status === "needs_review")
+  ) {
+    return {
+      callId: fileId,
+      status: asTrimmedString(previous.status) || "processed",
+      skipped: true,
+      appointmentMade: previous.appointmentMade === true,
+      workOrderId: asTrimmedString(previous.workOrderId) || undefined,
+    };
+  }
+  return null;
+}
+
 async function listPlaudFiles(maxPages = 6, pageSize = 50): Promise<PlaudFileSummary[]> {
   const session = await getPlaudSession();
   const files: PlaudFileSummary[] = [];
@@ -2006,8 +2026,9 @@ async function ingestPlaudFile(file: PlaudFileSummary): Promise<PlaudSyncResult>
 
 function fileMatchesPlaudWindow(
   file: PlaudFileSummary,
-  options: { date?: string; days?: number }
+  options: { date?: string; days?: number; allTime?: boolean }
 ): boolean {
+  if (options.allTime) return true;
   const startedAt =
     asTrimmedString(file.start_at) || asTrimmedString(file.created_at);
   if (options.date) {
@@ -2020,12 +2041,21 @@ function fileMatchesPlaudWindow(
   return parsed.getTime() >= cutoff;
 }
 
-async function syncPlaudRecordings(options: { date?: string; days?: number }) {
-  const files = await listPlaudFiles();
+async function syncPlaudRecordings(options: {
+  date?: string;
+  days?: number;
+  allTime?: boolean;
+}) {
+  const files = await listPlaudFiles(options.allTime ? 100 : 6);
   const matched = files.filter((file) => fileMatchesPlaudWindow(file, options));
   const results: PlaudSyncResult[] = [];
   for (const file of matched) {
     try {
+      const existing = await alreadyIngestedPlaudCall(file.id);
+      if (existing) {
+        results.push(existing);
+        continue;
+      }
       results.push(await ingestPlaudFile(file));
     } catch (error) {
       console.error(`Plaud ingest failed for ${file.id}:`, error);
@@ -2043,6 +2073,7 @@ async function syncPlaudRecordings(options: { date?: string; days?: number }) {
     failed: results.filter((item) => item.status === "failed").length,
     awaitingTranscript: results.filter((item) => item.status === "awaiting_transcript").length,
     appointments: results.filter((item) => item.appointmentMade).length,
+    scope: options.allTime ? "all-time" : options.date || `${options.days ?? 2}-days`,
     results,
   };
 }
@@ -2110,15 +2141,20 @@ export const connectPlaudWebSession = onCall({ cors: true }, async (request) => 
 });
 
 export const syncPlaudCalls = onCall(
-  { cors: true, timeoutSeconds: 540, memory: "1GiB" },
+  { cors: true, timeoutSeconds: 3600, memory: "1GiB" },
   async (request) => {
-    const input = request.data as { date?: unknown; days?: unknown };
+    const input = request.data as {
+      date?: unknown;
+      days?: unknown;
+      allTime?: unknown;
+    };
+    const allTime = input.allTime === true;
     const date = asTrimmedString(input.date);
     const days = typeof input.days === "number" ? input.days : undefined;
-    if (!date && !days) {
-      throw new HttpsError("invalid-argument", "Provide a date or a day count to sync");
+    if (!allTime && !date && !days) {
+      throw new HttpsError("invalid-argument", "Provide a date, a day count, or allTime");
     }
-    return syncPlaudRecordings({ date: date || undefined, days });
+    return syncPlaudRecordings({ date: date || undefined, days, allTime });
   }
 );
 

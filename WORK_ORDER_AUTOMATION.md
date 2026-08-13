@@ -149,8 +149,8 @@ developer API — the same API used by `plaud files` and `plaud transcript`.
    Do not use `npm install -g`; that often fails with `EACCES`.
 2. Copy `refresh_token` from `~/.plaud/tokens.json` into Functions env as
    `PLAUD_REFRESH_TOKEN`.
-3. Deploy functions. The Calls tab can then **Sync Plaud recordings** for the
-   selected day. A scheduled job also pulls the last two days every 15 minutes.
+3. Deploy functions. The Calls tab can **Sync this day** or **Sync all time**.
+   A scheduled job also pulls the last two days every 15 minutes.
 4. Each recording with a transcript is summarized. If a water-heater appointment
    was explicitly booked, a work order is created and the confirming transcript
    wording is highlighted.

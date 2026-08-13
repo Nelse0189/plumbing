@@ -105,7 +105,9 @@ Starter tier cannot list recordings.
 
 1. Record customer calls on the Plaud Note and let them sync to Plaud.
 2. Open the **Calls** tab and choose the day.
-3. Click **Sync Plaud recordings**, or wait for the 15-minute background sync.
+3. Click **Sync this day** for the selected date, or **Sync all time** to
+   import every Plaud recording. Already saved calls are skipped. The 15-minute
+   background job still pulls only the last two days.
 4. Review summaries. Booked water-heater appointments become work orders, with
    the confirming transcript sentence highlighted.
 5. Ask the day-chat questions such as "Which calls booked appointments?"

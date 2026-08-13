@@ -30,8 +30,11 @@ export async function getPlaudConnection(): Promise<PlaudConnection> {
 export async function syncPlaudCalls(input: {
   date?: string;
   days?: number;
+  allTime?: boolean;
 }): Promise<PlaudSyncSummary> {
-  const call = httpsCallable<typeof input, PlaudSyncSummary>(functions, 'syncPlaudCalls');
+  const call = httpsCallable<typeof input, PlaudSyncSummary>(functions, 'syncPlaudCalls', {
+    timeout: input.allTime ? 30 * 60 * 1000 : 9 * 60 * 1000,
+  });
   const result = await call(input);
   return result.data;
 }
