@@ -2,13 +2,14 @@ import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import ScheduleForm from './components/ScheduleForm';
 import MapView from './components/MapView';
+import BillingPage from './components/BillingPage';
 import type { Truck, Schedule } from './types';
 import { getTrucksForDate, saveSchedule } from './services/scheduleService';
 import './App.css';
 
 function App() {
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
-  const [viewMode, setViewMode] = useState<'schedule' | 'map'>('schedule');
+  const [viewMode, setViewMode] = useState<'schedule' | 'map' | 'billing'>('schedule');
   const [trucks, setTrucks] = useState<Truck[]>([
     { id: 'truck1', name: 'Truck 1', stops: [] },
     { id: 'truck2', name: 'Truck 2', stops: [] },
@@ -95,6 +96,16 @@ function App() {
             >
               Map View
             </button>
+            <button
+              onClick={() => setViewMode('billing')}
+              style={{
+                backgroundColor: viewMode === 'billing' ? 'var(--accent)' : 'var(--bg-secondary)',
+                color: viewMode === 'billing' ? 'var(--bg-primary)' : 'var(--text-primary)',
+                borderColor: viewMode === 'billing' ? 'var(--accent)' : 'var(--border)',
+              }}
+            >
+              Billing
+            </button>
           </div>
         </div>
       </header>
@@ -114,8 +125,10 @@ function App() {
             selectedDate={selectedDate}
             onSave={handleSaveSchedule}
           />
-        ) : (
+        ) : viewMode === 'map' ? (
           <MapView trucks={trucks} selectedDate={selectedDate} />
+        ) : (
+          <BillingPage trucks={trucks} selectedDate={selectedDate} />
         )}
       </main>
     </div>

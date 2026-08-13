@@ -25,6 +25,52 @@ export interface Schedule {
   trucks: Truck[];
 }
 
+export type WorkOrderLineCategory = 'labor' | 'material' | 'trip' | 'other';
+
+export interface WorkOrderLineItem {
+  id: string;
+  description: string;
+  category: WorkOrderLineCategory;
+  quantity: number;
+  unitPrice: number;
+}
+
+export type WorkOrderStatus = 'draft' | 'ready' | 'billed';
+
+export interface WorkOrder {
+  id: string;
+  workOrderNumber: string;
+  date: string;
+  customerName: string;
+  address: string;
+  phone: string;
+  truckName?: string;
+  technician?: string;
+  jobDescription: string;
+  notes: string;
+  /** Present when this work order was created from a scheduled stop */
+  sourceStopId?: string;
+  lineItems: WorkOrderLineItem[];
+  status: WorkOrderStatus;
+}
+
+export interface BillingOrder {
+  id: string;
+  billingOrderNumber: string;
+  createdAt: string;
+  workOrderNumbers: string[];
+  customerName: string;
+  address: string;
+  phone: string;
+  jobDate: string;
+  lineItems: WorkOrderLineItem[];
+  subtotal: number;
+  taxRate: number;
+  taxAmount: number;
+  total: number;
+  notes: string;
+}
+
 
 
 
