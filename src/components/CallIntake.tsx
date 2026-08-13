@@ -150,6 +150,28 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
               fields inside a JSON value.
             </li>
             <li>
+              If a ~360 character token is rejected, it is probably a user
+              token. On https://web.plaud.ai run this in Console, then click a
+              recording. It copies the next live Authorization token and prints
+              only the length:
+              <pre className="call-intake__transcript">{`const orig = window.fetch;
+window.fetch = async function(...args) {
+  const res = await orig.apply(this, args);
+  const headers = args[1] && args[1].headers;
+  const auth = headers instanceof Headers
+    ? (headers.get('Authorization') || '')
+    : ((headers && (headers.Authorization || headers.authorization)) || '');
+  if (/eyJ/.test(auth)) {
+    const token = auth.replace(/^(bearer|wt|ut|wrt)\\s+/i, '');
+    copy(token);
+    console.log('copied token length', token.length);
+    window.fetch = orig;
+  }
+  return res;
+};
+console.log('click a Plaud recording now');`}</pre>
+            </li>
+            <li>
               If Network does not show Authorization, run this in the
               <strong>Console</strong> tab. It prints key names only — paste
               those names here if you get stuck:

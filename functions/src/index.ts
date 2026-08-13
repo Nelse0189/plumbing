@@ -1354,13 +1354,96 @@ async function getPlaudSession(): Promise<PlaudSession> {
   };
 }
 
+const PLAUD_WEB_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+function plaudConsumerHeaders(token: string, scheme = "Bearer"): Record<string, string> {
+  return {
+    Authorization: `${scheme} ${token}`,
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    "User-Agent": PLAUD_WEB_USER_AGENT,
+    "app-platform": "web",
+  };
+}
+
+async function plaudFetchJson(
+  apiBase: string,
+  path: string,
+  token: string,
+  scheme: string,
+  init?: { method?: string; body?: string }
+) {
+  const response = await fetch(`${apiBase}${path}`, {
+    method: init?.method || "GET",
+    headers: plaudConsumerHeaders(token, scheme),
+    body: init?.body,
+  });
+  const raw = await response.text();
+  let payload: Record<string, unknown> = {};
+  try {
+    payload = asRecord(JSON.parse(raw || "{}"));
+  } catch {
+    payload = { raw: raw.slice(0, 180) };
+  }
+  return { ok: response.ok, status: response.status, raw, payload };
+}
+
+async function mintPlaudWorkspaceToken(userToken: string, apiBase: string, scheme: string) {
+  const listed = await plaudFetchJson(
+    apiBase,
+    "/team-app/workspaces/list?need_personal_workspace=true",
+    userToken,
+    scheme
+  );
+  const data = asRecord(listed.payload.data);
+  const workspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
+  const personal =
+    workspaces
+      .map((item) => asRecord(item))
+      .find((item) => asTrimmedString(item.workspace_type) === "0") ||
+    asRecord(workspaces[0]);
+  const workspaceId =
+    asTrimmedString(personal.workspace_id) || asTrimmedString(personal.id);
+  if (!listed.ok || !workspaceId) {
+    throw new Error(
+      asTrimmedString(listed.payload.msg) ||
+        `Could not list Plaud workspaces (${listed.status})`
+    );
+  }
+  const minted = await plaudFetchJson(
+    apiBase,
+    `/user-app/auth/workspace/token/${encodeURIComponent(workspaceId)}`,
+    userToken,
+    scheme,
+    { method: "POST", body: "{}" }
+  );
+  const mintedData = asRecord(minted.payload.data);
+  const workspaceToken =
+    asTrimmedString(mintedData.workspace_token) ||
+    asTrimmedString(mintedData.workspaceToken) ||
+    asTrimmedString(mintedData.token) ||
+    asTrimmedString(minted.payload.workspace_token);
+  if (!minted.ok || !workspaceToken) {
+    throw new Error(
+      asTrimmedString(minted.payload.msg) ||
+        `Could not mint Plaud workspace token (${minted.status})`
+    );
+  }
+  return workspaceToken;
+}
+
 async function plaudRequest<T>(path: string, retry = true): Promise<T> {
   const session = await getPlaudSession();
+  const headers =
+    session.mode === "consumer"
+      ? plaudConsumerHeaders(session.accessToken, session.authScheme || "Bearer")
+      : {
+          Authorization: `Bearer ${session.accessToken}`,
+          Accept: "application/json",
+        };
   const response = await fetch(`${session.apiBase}${path}`, {
-    headers: {
-      Authorization: `${session.authScheme || (session.mode === "consumer" ? "Bearer" : "Bearer")} ${session.accessToken}`,
-      Accept: "application/json",
-    },
+    headers,
   });
   if (response.status === 401 && retry && session.mode === "developer") {
     await admin.firestore().doc(PLAUD_AUTH_DOC).set(
@@ -1376,6 +1459,11 @@ async function plaudRequest<T>(path: string, retry = true): Promise<T> {
   return (await response.json()) as T;
 }
 
+function plaudStatusOk(payload: Record<string, unknown>): boolean {
+  const status = payload.status;
+  return status === undefined || status === 0 || status === "0" || status === "success";
+}
+
 async function verifyPlaudWebToken(token: string, apiBase: string) {
   if (!/^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) {
     throw new HttpsError(
@@ -1386,25 +1474,35 @@ async function verifyPlaudWebToken(token: string, apiBase: string) {
   const schemes = ["Bearer", "bearer", "WT", "UT"];
   let lastDetail = "";
   for (const scheme of schemes) {
-    const response = await fetch(`${apiBase}/file/simple/web?skip=0&limit=1`, {
-      headers: {
-        Authorization: `${scheme} ${token}`,
-        Accept: "application/json",
-      },
-    });
-    const raw = await response.text();
-    lastDetail = raw.slice(0, 180);
-    if (!response.ok) continue;
-    const payload = asRecord(JSON.parse(raw || "{}"));
-    const status = payload.status;
-    if (status === undefined || status === 0 || status === "0" || status === "success") {
-      return { payload, authScheme: scheme };
+    const listed = await plaudFetchJson(
+      apiBase,
+      "/file/simple/web?skip=0&limit=1",
+      token,
+      scheme
+    );
+    lastDetail = asTrimmedString(listed.payload.msg) || listed.raw.slice(0, 180);
+    if (listed.ok && plaudStatusOk(listed.payload)) {
+      return { payload: listed.payload, authScheme: scheme, accessToken: token };
     }
-    lastDetail = asTrimmedString(payload.msg) || lastDetail;
+    try {
+      const workspaceToken = await mintPlaudWorkspaceToken(token, apiBase, scheme);
+      const retry = await plaudFetchJson(
+        apiBase,
+        "/file/simple/web?skip=0&limit=1",
+        workspaceToken,
+        "Bearer"
+      );
+      if (retry.ok && plaudStatusOk(retry.payload)) {
+        return { payload: retry.payload, authScheme: "Bearer", accessToken: workspaceToken };
+      }
+      lastDetail = asTrimmedString(retry.payload.msg) || retry.raw.slice(0, 180);
+    } catch (error) {
+      lastDetail = error instanceof Error ? error.message : lastDetail;
+    }
   }
   throw new HttpsError(
     "invalid-argument",
-    `Plaud rejected that JWT (${describePlaudToken(token)}). ${lastDetail} Copy a fresh Authorization Bearer value from a live api.plaud.ai request.`
+    `Plaud rejected that JWT (${describePlaudToken(token)}). ${lastDetail} A 360-character value is usually a user token. Copy the longer Authorization Bearer value from a live api.plaud.ai file request, or paste the user token again after this update so we can mint a workspace token.`
   );
 }
 
@@ -1944,7 +2042,7 @@ export const connectPlaudWebSession = onCall({ cors: true }, async (request) => 
   await admin.firestore().doc(PLAUD_AUTH_DOC).set(
     {
       mode: "consumer",
-      accessToken: token,
+      accessToken: verified.accessToken,
       authScheme: verified.authScheme,
       apiBase,
       refreshToken: "",
