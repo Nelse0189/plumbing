@@ -210,6 +210,7 @@ console.log('click a Plaud recording now');`}</pre>
                       : '. A real Plaud token starts with eyJ. If this is the Cookie line, paste the whole line.'
                 }`
               : 'Paste the whole Cookie line from the api.plaud.ai request, or just the eyJ... cookie value. Do not paste the token into chat.'}
+          </p>
           <label>
             API base (usually leave this)
             <input value={webApiBase} onChange={(event) => setWebApiBase(event.target.value)} />
