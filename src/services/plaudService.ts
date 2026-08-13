@@ -6,6 +6,18 @@ import type { PlaudCall, PlaudConnection, PlaudSyncSummary } from '../types';
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 const functions = getFunctions(app);
 
+export async function connectPlaudWebSession(input: {
+  token: string;
+  apiBase?: string;
+}): Promise<{ connected: boolean; mode?: string }> {
+  const call = httpsCallable<typeof input, { connected: boolean; mode?: string }>(
+    functions,
+    'connectPlaudWebSession'
+  );
+  const result = await call(input);
+  return result.data;
+}
+
 export async function getPlaudConnection(): Promise<PlaudConnection> {
   const call = httpsCallable<Record<string, never>, PlaudConnection>(
     functions,

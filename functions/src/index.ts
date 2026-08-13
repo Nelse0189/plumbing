@@ -1145,6 +1145,13 @@ type PlaudFileDetail = PlaudFileSummary & {
   presigned_url?: string;
   source_list?: PlaudDataItem[];
   note_list?: PlaudDataItem[];
+  transcriptText?: string;
+};
+
+type PlaudSession = {
+  mode: "developer" | "consumer";
+  accessToken: string;
+  apiBase: string;
 };
 
 type PlaudSegment = {
@@ -1208,26 +1215,67 @@ function plaudFileId(value: unknown): string {
   );
 }
 
-async function getPlaudAccessToken(): Promise<string> {
+function normalizePlaudWebToken(value: string): string {
+  return value.trim().replace(/^bearer\s+/i, "");
+}
+
+function plaudConsumerApiBase(value?: string): string {
+  const raw =
+    asTrimmedString(value) ||
+    "https://api.plaud.ai";
+  return raw.replace(/\/$/, "");
+}
+
+function plaudEpochToIso(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    const ms = value < 1e12 ? value * 1000 : value;
+    return new Date(ms).toISOString();
+  }
+  return asTrimmedString(value);
+}
+
+async function getPlaudSession(): Promise<PlaudSession> {
   const db = admin.firestore();
   const stored = await db.doc(PLAUD_AUTH_DOC).get();
   const data = stored.data() || {};
   const now = Date.now();
+  const storedMode = asTrimmedString(data.mode) === "consumer" ? "consumer" : "developer";
   const cachedAccess = asTrimmedString(data.accessToken);
   const cachedExpiry =
     typeof data.expiresAtMs === "number" ? data.expiresAtMs : 0;
-  if (cachedAccess && cachedExpiry > now + 60_000) {
-    return cachedAccess;
+  if (cachedAccess && (storedMode === "consumer" || cachedExpiry > now + 60_000)) {
+    return {
+      mode: storedMode,
+      accessToken: cachedAccess,
+      apiBase:
+        storedMode === "consumer"
+          ? plaudConsumerApiBase(asTrimmedString(data.apiBase))
+          : strPlaudApiBase.value().replace(/\/$/, ""),
+    };
+  }
+
+  if (storedMode === "consumer" && cachedAccess) {
+    return {
+      mode: "consumer",
+      accessToken: cachedAccess,
+      apiBase: plaudConsumerApiBase(asTrimmedString(data.apiBase)),
+    };
   }
 
   const refreshToken =
     asTrimmedString(data.refreshToken) || strPlaudRefreshToken.value();
   if (!refreshToken) {
     const envAccess = strPlaudAccessToken.value();
-    if (envAccess) return envAccess;
+    if (envAccess) {
+      return {
+        mode: "developer",
+        accessToken: envAccess,
+        apiBase: strPlaudApiBase.value().replace(/\/$/, ""),
+      };
+    }
     throw new HttpsError(
       "failed-precondition",
-      "Plaud is not connected. Run `plaud login`, then set PLAUD_REFRESH_TOKEN from ~/.plaud/tokens.json."
+      "Plaud is not connected. Sign in at web.plaud.ai and paste the session token on the Calls tab."
     );
   }
 
@@ -1243,7 +1291,7 @@ async function getPlaudAccessToken(): Promise<string> {
     const detail = await response.text();
     throw new HttpsError(
       "failed-precondition",
-      `Plaud token refresh failed (${response.status}). Re-run \`plaud login\` and update PLAUD_REFRESH_TOKEN. ${detail.slice(0, 180)}`
+      `Plaud token refresh failed (${response.status}). Reconnect Plaud from the Calls tab. ${detail.slice(0, 180)}`
     );
   }
   const payload = asRecord(await response.json());
@@ -1259,6 +1307,7 @@ async function getPlaudAccessToken(): Promise<string> {
     typeof payload.expires_in === "number" ? payload.expires_in : 3600;
   await db.doc(PLAUD_AUTH_DOC).set(
     {
+      mode: "developer",
       accessToken,
       refreshToken: nextRefresh,
       expiresAtMs: now + expiresIn * 1000,
@@ -1266,19 +1315,22 @@ async function getPlaudAccessToken(): Promise<string> {
     },
     { merge: true }
   );
-  return accessToken;
+  return {
+    mode: "developer",
+    accessToken,
+    apiBase: strPlaudApiBase.value().replace(/\/$/, ""),
+  };
 }
 
 async function plaudRequest<T>(path: string, retry = true): Promise<T> {
-  const token = await getPlaudAccessToken();
-  const base = strPlaudApiBase.value().replace(/\/$/, "");
-  const response = await fetch(`${base}${path}`, {
+  const session = await getPlaudSession();
+  const response = await fetch(`${session.apiBase}${path}`, {
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: `${session.mode === "consumer" ? "bearer" : "Bearer"} ${session.accessToken}`,
       Accept: "application/json",
     },
   });
-  if (response.status === 401 && retry) {
+  if (response.status === 401 && retry && session.mode === "developer") {
     await admin.firestore().doc(PLAUD_AUTH_DOC).set(
       { accessToken: "", expiresAtMs: 0 },
       { merge: true }
@@ -1292,8 +1344,26 @@ async function plaudRequest<T>(path: string, retry = true): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function verifyPlaudWebToken(token: string, apiBase: string) {
+  const response = await fetch(`${apiBase}/file/simple/web?skip=0&limit=1`, {
+    headers: {
+      Authorization: `bearer ${token}`,
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new HttpsError(
+      "invalid-argument",
+      `That Plaud web token was rejected (${response.status}). Sign in at https://web.plaud.ai and copy a fresh tokenstr or pld_ut value. ${detail.slice(0, 160)}`
+    );
+  }
+  return asRecord(await response.json());
+}
+
 function plaudFilesFromPage(payload: unknown): PlaudFileSummary[] {
   const record = asRecord(payload);
+  const data = asRecord(record.data);
   const raw = Array.isArray(payload)
     ? payload
     : Array.isArray(record.data)
@@ -1302,19 +1372,36 @@ function plaudFilesFromPage(payload: unknown): PlaudFileSummary[] {
         ? record.files
         : Array.isArray(record.items)
           ? record.items
-          : Array.isArray(asRecord(record.data).files)
-            ? (asRecord(record.data).files as unknown[])
-            : [];
+          : Array.isArray(data.files)
+            ? (data.files as unknown[])
+            : Array.isArray(data.data_file_list)
+              ? (data.data_file_list as unknown[])
+              : Array.isArray(data.file_list)
+                ? (data.file_list as unknown[])
+                : Array.isArray(data.list)
+                  ? (data.list as unknown[])
+                  : [];
   return raw
     .map((item) => {
       const file = asRecord(item);
       const id = plaudFileId(file);
       if (!id) return null;
+      const startedAt =
+        plaudEpochToIso(file.start_time) ||
+        asTrimmedString(file.start_at) ||
+        asTrimmedString(file.startAt) ||
+        asTrimmedString(file.created_at) ||
+        asTrimmedString(file.createdAt);
       return {
         id,
-        name: asTrimmedString(file.name) || undefined,
-        created_at: asTrimmedString(file.created_at) || asTrimmedString(file.createdAt) || undefined,
-        start_at: asTrimmedString(file.start_at) || asTrimmedString(file.startAt) || undefined,
+        name:
+          asTrimmedString(file.name) ||
+          asTrimmedString(file.filename) ||
+          asTrimmedString(file.fullname) ||
+          asTrimmedString(file.file_name) ||
+          undefined,
+        created_at: startedAt || undefined,
+        start_at: startedAt || undefined,
         duration:
           typeof file.duration === "number"
             ? file.duration
@@ -1329,7 +1416,19 @@ function plaudFilesFromPage(payload: unknown): PlaudFileSummary[] {
 }
 
 async function listPlaudFiles(maxPages = 6, pageSize = 50): Promise<PlaudFileSummary[]> {
+  const session = await getPlaudSession();
   const files: PlaudFileSummary[] = [];
+  if (session.mode === "consumer") {
+    for (let page = 0; page < maxPages; page += 1) {
+      const payload = await plaudRequest<unknown>(
+        `/file/simple/web?skip=${page * pageSize}&limit=${pageSize}`
+      );
+      const batch = plaudFilesFromPage(payload);
+      files.push(...batch);
+      if (batch.length < pageSize) break;
+    }
+    return files;
+  }
   for (let page = 1; page <= maxPages; page += 1) {
     const payload = await plaudRequest<unknown>(
       `/open/third-party/files/?page=${page}&page_size=${pageSize}`
@@ -1373,7 +1472,25 @@ function unwrapPlaudFile(payload: unknown): PlaudFileDetail {
   };
 }
 
+function segmentsToTranscript(segments: unknown[]): string {
+  return segments
+    .map((item) => {
+      const seg = asRecord(item) as PlaudSegment;
+      const content = asTrimmedString(seg.content) || asTrimmedString(seg.text);
+      if (!content) return "";
+      const speaker = asTrimmedString(seg.speaker);
+      return `[${formatPlaudClock(Number(seg.start_time) || 0)} - ${formatPlaudClock(Number(seg.end_time) || 0)}] ${
+        speaker ? `${speaker}: ` : ""
+      }${content}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
 function plaudTranscriptFromDetail(detail: PlaudFileDetail): string {
+  if (asTrimmedString(detail.transcriptText)) {
+    return asTrimmedString(detail.transcriptText);
+  }
   const items = detail.source_list || [];
   const transaction =
     items.find((item) => asTrimmedString(item.data_type) === "transaction") || items[0];
@@ -1382,18 +1499,7 @@ function plaudTranscriptFromDetail(detail: PlaudFileDetail): string {
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (Array.isArray(parsed)) {
-      return parsed
-        .map((item) => {
-          const seg = asRecord(item) as PlaudSegment;
-          const content = asTrimmedString(seg.content) || asTrimmedString(seg.text);
-          if (!content) return "";
-          const speaker = asTrimmedString(seg.speaker);
-          return `[${formatPlaudClock(Number(seg.start_time) || 0)} - ${formatPlaudClock(Number(seg.end_time) || 0)}] ${
-            speaker ? `${speaker}: ` : ""
-          }${content}`;
-        })
-        .filter(Boolean)
-        .join("\n");
+      return segmentsToTranscript(parsed);
     }
     const record = asRecord(parsed);
     return asTrimmedString(record.text) || raw;
@@ -1628,10 +1734,59 @@ async function ingestPlaudCallRecord(input: {
   }
 }
 
-async function ingestPlaudFile(file: PlaudFileSummary): Promise<PlaudSyncResult> {
-  const detail = unwrapPlaudFile(
-    await plaudRequest<unknown>(`/open/third-party/files/${encodeURIComponent(file.id)}`)
+function unwrapConsumerFile(payload: unknown): PlaudFileDetail {
+  const record = asRecord(payload);
+  const file = asRecord(record.data);
+  const source = plaudFileId(file) ? file : record;
+  const trans = asRecord(source.trans_result);
+  const segments = Array.isArray(trans.segments)
+    ? trans.segments
+    : Array.isArray(source.segments)
+      ? source.segments
+      : [];
+  const startedAt =
+    plaudEpochToIso(source.start_time) ||
+    asTrimmedString(source.start_at) ||
+    asTrimmedString(source.created_at);
+  return {
+    id: plaudFileId(source),
+    name:
+      asTrimmedString(source.filename) ||
+      asTrimmedString(source.file_name) ||
+      asTrimmedString(source.name) ||
+      asTrimmedString(source.fullname) ||
+      undefined,
+    created_at: startedAt || undefined,
+    start_at: startedAt || undefined,
+    duration:
+      typeof source.duration === "number" ? source.duration : Number(source.duration) || undefined,
+    serial_number:
+      asTrimmedString(source.serial_number) ||
+      asTrimmedString(source.serialNumber) ||
+      undefined,
+    source_list: [],
+    note_list: [],
+    transcriptText:
+      segmentsToTranscript(segments) ||
+      asTrimmedString(trans.text) ||
+      asTrimmedString(source.transcript),
+  };
+}
+
+async function fetchPlaudFileDetail(fileId: string): Promise<PlaudFileDetail> {
+  const session = await getPlaudSession();
+  if (session.mode === "consumer") {
+    return unwrapConsumerFile(
+      await plaudRequest<unknown>(`/file/detail/${encodeURIComponent(fileId)}`)
+    );
+  }
+  return unwrapPlaudFile(
+    await plaudRequest<unknown>(`/open/third-party/files/${encodeURIComponent(fileId)}`)
   );
+}
+
+async function ingestPlaudFile(file: PlaudFileSummary): Promise<PlaudSyncResult> {
+  const detail = await fetchPlaudFileDetail(file.id);
   const startedAt =
     asTrimmedString(detail.start_at) ||
     asTrimmedString(detail.created_at) ||
@@ -1694,10 +1849,23 @@ async function syncPlaudRecordings(options: { date?: string; days?: number }) {
 
 export const getPlaudConnection = onCall({ cors: true }, async () => {
   try {
+    const session = await getPlaudSession();
+    if (session.mode === "consumer") {
+      const payload = asRecord(
+        await plaudRequest<unknown>("/file/simple/web?skip=0&limit=1")
+      );
+      const files = plaudFilesFromPage(payload);
+      return {
+        connected: true,
+        mode: "web",
+        name: files[0]?.name ? "Plaud web account" : "Plaud web account",
+      };
+    }
     const payload = asRecord(await plaudRequest<unknown>("/open/third-party/users/current"));
     const user = plaudFileId(asRecord(payload.data)) ? asRecord(payload.data) : payload;
     return {
       connected: true,
+      mode: "cli",
       email:
         asTrimmedString(user.email) ||
         asTrimmedString(user.user_email) ||
@@ -1713,6 +1881,31 @@ export const getPlaudConnection = onCall({ cors: true }, async () => {
       error: error instanceof Error ? error.message : String(error),
     };
   }
+});
+
+export const connectPlaudWebSession = onCall({ cors: true }, async (request) => {
+  const input = request.data as { token?: unknown; apiBase?: unknown };
+  const token = normalizePlaudWebToken(asTrimmedString(input.token));
+  const apiBase = plaudConsumerApiBase(asTrimmedString(input.apiBase));
+  if (token.length < 20) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Paste the Plaud web tokenstr or pld_ut value from https://web.plaud.ai"
+    );
+  }
+  await verifyPlaudWebToken(token, apiBase);
+  await admin.firestore().doc(PLAUD_AUTH_DOC).set(
+    {
+      mode: "consumer",
+      accessToken: token,
+      apiBase,
+      refreshToken: "",
+      expiresAtMs: Date.now() + 30 * 24 * 60 * 60 * 1000,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+  return { connected: true, mode: "web" };
 });
 
 export const syncPlaudCalls = onCall(

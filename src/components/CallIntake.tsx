@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { PlaudCall, PlaudConnection, PlaudSyncSummary } from '../types';
 import {
   askPlaudCalls,
+  connectPlaudWebSession,
   getPlaudConnection,
   importPlaudTranscript,
   listPlaudCalls,
@@ -49,6 +50,9 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
   const [asking, setAsking] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [webToken, setWebToken] = useState('');
+  const [webApiBase, setWebApiBase] = useState('https://api.plaud.ai');
   const [error, setError] = useState<string | null>(null);
 
   const reload = async () => {
@@ -87,8 +91,8 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
           </p>
           <p className={`call-intake__connection ${connection?.connected ? 'is-connected' : 'is-disconnected'}`}>
             {connection?.connected
-              ? `Connected to Plaud${connection.name || connection.email ? ` · ${connection.name || connection.email}` : ''}`
-              : connection?.error || 'Plaud is not connected. On your computer run `npx -y @plaud-ai/cli login`, then add PLAUD_REFRESH_TOKEN from ~/.plaud/tokens.json.'}
+              ? `Connected to Plaud${connection.mode === 'web' ? ' via web.plaud.ai' : ''}${connection.name || connection.email ? ` · ${connection.name || connection.email}` : ''}`
+              : 'Plaud CLI login is currently blocked by a broken Plaud “bind device” page. Connect with a web.plaud.ai session token below.'}
           </p>
         </div>
         <div className="call-intake__actions">
@@ -118,6 +122,58 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
       </header>
 
       {error && <div className="call-intake__error">{error}</div>}
+
+      {!connection?.connected && (
+        <section className="call-intake__mock">
+          <h3>Connect Plaud from web.plaud.ai</h3>
+          <p>
+            Plaud’s official CLI login is showing a broken page
+            (<code>oauth_bind_device_title</code>). Use the normal website instead:
+          </p>
+          <ol className="call-intake__steps">
+            <li>Open <a href="https://web.plaud.ai" target="_blank" rel="noreferrer">https://web.plaud.ai</a> and sign in as usual.</li>
+            <li>Press F12, then open <strong>Application</strong>.</li>
+            <li>Local Storage → <code>https://web.plaud.ai</code> → copy <code>tokenstr</code>.</li>
+            <li>If <code>tokenstr</code> is missing, open Cookies → <code>https://api.plaud.ai</code> and copy <code>pld_ut</code>.</li>
+            <li>If you see <code>plaud_user_api_domain</code>, paste that into API base below.</li>
+          </ol>
+          <label>
+            Plaud web token
+            <textarea
+              value={webToken}
+              onChange={(event) => setWebToken(event.target.value)}
+              placeholder="bearer eyJ... or the pld_ut cookie value"
+            />
+          </label>
+          <label>
+            API base (usually leave this)
+            <input value={webApiBase} onChange={(event) => setWebApiBase(event.target.value)} />
+          </label>
+          <button
+            type="button"
+            disabled={connecting || webToken.trim().length < 20}
+            onClick={async () => {
+              setConnecting(true);
+              setError(null);
+              try {
+                await connectPlaudWebSession({
+                  token: webToken,
+                  apiBase: webApiBase,
+                });
+                setWebToken('');
+                await reload();
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setConnecting(false);
+              }
+            }}
+          >
+            {connecting ? 'Connecting…' : 'Connect Plaud account'}
+          </button>
+        </section>
+      )}
+
       {syncSummary && (
         <p className="call-intake__sync">
           Synced {syncSummary.matched} of {syncSummary.scanned} Plaud files ·

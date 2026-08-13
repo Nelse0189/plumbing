@@ -4,11 +4,27 @@ Office calls are recorded on a Plaud Note, transcribed by Plaud, then synced
 into the dispatch app. This uses the same official developer API as the Plaud
 CLI (`plaud files`, `plaud transcript`, `plaud summary`).
 
-## One-time Plaud login
+## Connect from the Calls tab (recommended)
+
+Plaud's official CLI login currently shows a broken page with labels like
+`oauth_bind_device_title`. Use the normal Plaud website instead:
+
+1. Open https://web.plaud.ai and sign in as usual.
+2. Press F12 → **Application**.
+3. Local Storage → `https://web.plaud.ai` → copy `tokenstr`.
+4. If `tokenstr` is missing, Cookies → `https://api.plaud.ai` → copy `pld_ut`.
+5. On the dispatch **Calls** tab, paste that value and click **Connect Plaud account**.
+
+Do not paste the token into chat. The Calls tab stores it in a private
+Firestore document used only by Cloud Functions.
+
+## One-time Plaud CLI login
 
 Run this on your own computer, not in the Cloud Agent terminal. `plaud login`
 opens a browser and writes tokens to your home directory. A global `npm
-install -g` is not required and often fails with `EACCES`.
+install -g` is not required and often fails with `EACCES`. The official OAuth
+page may currently fail with a broken bind-device screen; use the Calls tab
+method above if that happens.
 
 On a trusted machine with Node.js 20+:
 

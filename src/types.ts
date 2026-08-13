@@ -81,6 +81,7 @@ export interface PlaudCall {
 
 export interface PlaudConnection {
   connected: boolean;
+  mode?: 'cli' | 'web';
   email?: string;
   name?: string;
   error?: string;

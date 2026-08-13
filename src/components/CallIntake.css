@@ -37,6 +37,13 @@
   color: var(--error);
 }
 
+.call-intake__steps {
+  margin: 0.4rem 0 0.8rem 1.2rem;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
 .call-intake__sync,
 .call-intake__waiting {
   margin: 0;
