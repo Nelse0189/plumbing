@@ -1461,6 +1461,55 @@ function extractAppointmentDateFromTexts(startedAt: string, parts: string[]): st
   return "";
 }
 
+function inferredPlaudAppointmentDate(data: FirebaseFirestore.DocumentData): string {
+  const stored = asTrimmedString(data.appointmentDate);
+  if (isIsoDate(stored)) return stored;
+  return extractAppointmentDateFromTexts(asTrimmedString(data.startedAt), [
+    stored,
+    asTrimmedString(data.summary),
+    asTrimmedString(data.callSummary),
+    asTrimmedString(asRecord(data.appointmentEvidence).quote),
+    asTrimmedString(data.plaudSummary),
+    asTrimmedString(data.notes),
+    asTrimmedString(data.transcript),
+  ]);
+}
+
+async function persistInferredAppointmentDates(
+  documents: Array<{
+    ref: FirebaseFirestore.DocumentReference;
+    data: () => FirebaseFirestore.DocumentData | undefined;
+    id: string;
+  }>
+) {
+  const db = admin.firestore();
+  let batch = db.batch();
+  let ops = 0;
+  const flush = async () => {
+    if (ops === 0) return;
+    await batch.commit();
+    batch = db.batch();
+    ops = 0;
+  };
+  for (const document of documents) {
+    const data = document.data();
+    if (!data || isIsoDate(asTrimmedString(data.appointmentDate))) continue;
+    const inferred = inferredPlaudAppointmentDate(data);
+    if (!inferred) continue;
+    const stamp = {
+      appointmentDate: inferred,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    batch.set(document.ref, stamp, { merge: true });
+    ops += 1;
+    const workOrderId = asTrimmedString(data.workOrderId) || document.id;
+    batch.set(db.collection("workOrders").doc(workOrderId), stamp, { merge: true });
+    ops += 1;
+    if (ops >= 400) await flush();
+  }
+  await flush();
+}
+
 function transcriptEvidenceRange(transcript: string, quote: string) {
   const needle = asTrimmedString(quote);
   if (!needle) {
@@ -2302,13 +2351,7 @@ function plaudRecordNeedsProcessing(
   if (
     previous.appointmentMade === true &&
     !isIsoDate(asTrimmedString(previous.appointmentDate)) &&
-    extractAppointmentDateFromTexts(asTrimmedString(previous.startedAt), [
-      asTrimmedString(previous.appointmentDate),
-      asTrimmedString(previous.summary),
-      asTrimmedString(asRecord(previous.appointmentEvidence).quote),
-      asTrimmedString(previous.plaudSummary),
-      transcript,
-    ])
+    inferredPlaudAppointmentDate(previous)
   ) {
     return true;
   }
@@ -2598,32 +2641,7 @@ async function ingestPlaudCallRecord(input: {
     previous.status === "processed" &&
     plaudBookingIsConfirmed(previous)
   ) {
-    if (!isIsoDate(asTrimmedString(previous.appointmentDate))) {
-      const inferredDate = extractAppointmentDateFromTexts(startedAt, [
-        asTrimmedString(previous.appointmentDate),
-        asTrimmedString(previous.summary),
-        asTrimmedString(asRecord(previous.appointmentEvidence).quote),
-        asTrimmedString(previous.plaudSummary),
-        transcript,
-      ]);
-      if (inferredDate) {
-        await callRef.set(
-          {
-            appointmentDate: inferredDate,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-        const workOrderId = asTrimmedString(previous.workOrderId) || documentId;
-        await db.collection("workOrders").doc(workOrderId).set(
-          {
-            appointmentDate: inferredDate,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-      }
-    }
+    await persistInferredAppointmentDates([existing]);
     return {
       callId,
       status: asTrimmedString(previous.status) || "processed",
@@ -3621,7 +3639,7 @@ function serializePlaudCall(documentId: string, data: admin.firestore.DocumentDa
     customerName: asTrimmedString(data.customerName) || undefined,
     phone: asTrimmedString(data.phone) || undefined,
     address: asTrimmedString(data.address) || undefined,
-    appointmentDate: asTrimmedString(data.appointmentDate) || undefined,
+    appointmentDate: inferredPlaudAppointmentDate(data) || undefined,
     appointmentTime: asTrimmedString(data.appointmentTime) || undefined,
     status: asTrimmedString(data.status) || "needs_review",
     error: asTrimmedString(data.error) || undefined,
@@ -3656,6 +3674,10 @@ export const processPlaudCall = onCall(
       hasPlaudSpeakers &&
       previous.status === "processed" &&
       plaudBookingIsConfirmed(previous);
+
+    if (alreadyDone && !isIsoDate(asTrimmedString(previous.appointmentDate))) {
+      await persistInferredAppointmentDates([existing]);
+    }
 
     if (!alreadyDone) {
       if (fileId.startsWith("manual-")) {
@@ -3722,6 +3744,11 @@ export const listPlaudCalls = onCall(
     const snapshot = allTime
       ? await callsRef.limit(500).get()
       : await callsRef.where("callDate", "==", date).limit(100).get();
+    try {
+      await persistInferredAppointmentDates(snapshot.docs);
+    } catch (error) {
+      console.error("Plaud appointment date backfill failed", error);
+    }
     const stored = snapshot.docs.map((document) =>
       serializePlaudCall(document.id, document.data() || {})
     );
