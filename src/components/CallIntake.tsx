@@ -147,16 +147,26 @@ function inferIsoDateFromText(text: string, startedAt?: string): string {
   return '';
 }
 
+function textLooksUnscheduled(text: string): boolean {
+  return /\b(get back to you|call(ing)? (you )?back|i will call you back|figure out when|once details|to schedule it|probably next week|preferably (the )?next week|next week or the week after|week after|not sure when|sometime (probably )?(next week|the week after)|when you('re| are) ready)\b/i.test(
+    text
+  );
+}
+
 function appointmentDateForCall(call: PlaudCall): string {
-  if (call.appointmentDate && /^\d{4}-\d{2}-\d{2}$/.test(call.appointmentDate)) {
+  const prose = [call.summary, call.plaudSummary, call.appointmentEvidence?.quote]
+    .filter(Boolean)
+    .join('\n');
+  const fromProse = inferIsoDateFromText(prose, call.startedAt);
+  if (fromProse) return fromProse;
+  if (
+    call.appointmentDate &&
+    /^\d{4}-\d{2}-\d{2}$/.test(call.appointmentDate) &&
+    !textLooksUnscheduled(prose)
+  ) {
     return call.appointmentDate;
   }
-  return inferIsoDateFromText(
-    [call.appointmentDate, call.summary, call.plaudSummary, call.appointmentEvidence?.quote]
-      .filter(Boolean)
-      .join('\n'),
-    call.startedAt
-  );
+  return '';
 }
 
 function AppointmentDateBadge({
