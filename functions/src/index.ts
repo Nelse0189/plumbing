@@ -1153,6 +1153,7 @@ type PlaudSession = {
   accessToken: string;
   apiBase: string;
   authScheme?: string;
+  userToken?: string;
 };
 
 type PlaudSegment = {
@@ -1210,10 +1211,15 @@ function asRecord(value: unknown): Record<string, unknown> {
 function plaudFileId(value: unknown): string {
   const record = asRecord(value);
   return (
-    asTrimmedString(record.id) ||
-    asTrimmedString(record.file_id) ||
-    asTrimmedString(record.fileId)
+    asPlaudId(record.id) ||
+    asPlaudId(record.file_id) ||
+    asPlaudId(record.fileId)
   );
+}
+
+function asPlaudId(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) return String(Math.trunc(value));
+  return asTrimmedString(value);
 }
 
 const PLAUD_JWT_RE = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
@@ -1311,6 +1317,54 @@ function plaudConsumerApiBase(value?: string): string {
   return raw.replace(/\/$/, "");
 }
 
+function isAllowedPlaudApiBase(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && (url.hostname === "plaud.ai" || url.hostname.endsWith(".plaud.ai"));
+  } catch {
+    return false;
+  }
+}
+
+function plaudJwtPayload(token: string): Record<string, unknown> {
+  try {
+    const part = token.split(".")[1] || "";
+    const padded = part.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((part.length + 3) % 4);
+    return asRecord(JSON.parse(Buffer.from(padded, "base64").toString("utf8")));
+  } catch {
+    return {};
+  }
+}
+
+function plaudJwtTyp(token: string): string {
+  return asTrimmedString(plaudJwtPayload(token).typ).toUpperCase();
+}
+
+function plaudJwtExpired(token: string): boolean {
+  const exp = Number(plaudJwtPayload(token).exp);
+  if (!Number.isFinite(exp) || exp <= 0) return false;
+  return exp * 1000 < Date.now() + 60_000;
+}
+
+function plaudRegionRedirect(payload: Record<string, unknown>): string {
+  const status = payload.status;
+  const msg = asTrimmedString(payload.msg).toLowerCase();
+  if (status !== -302 && !msg.includes("region mismatch")) return "";
+  const data = asRecord(payload.data);
+  const domains = asRecord(data.domains);
+  const api = plaudConsumerApiBase(asTrimmedString(domains.api) || asTrimmedString(data.api));
+  return isAllowedPlaudApiBase(api) ? api : "";
+}
+
+function workspaceTypeValue(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return asTrimmedString(value);
+}
+
+function plaudWebListPath(skip: number, limit: number, trash = "0"): string {
+  return `/file/simple/web?skip=${skip}&limit=${limit}&is_trash=${trash}&sort_by=start_time&is_desc=true`;
+}
+
 function plaudEpochToIso(value: unknown): string {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     const ms = value < 1e12 ? value * 1000 : value;
@@ -1326,26 +1380,62 @@ async function getPlaudSession(): Promise<PlaudSession> {
   const now = Date.now();
   const storedMode = asTrimmedString(data.mode) === "consumer" ? "consumer" : "developer";
   const cachedAccess = asTrimmedString(data.accessToken);
+  const cachedUserToken =
+    asTrimmedString(data.userToken) ||
+    (plaudJwtTyp(cachedAccess) === "UT" ? cachedAccess : "");
   const cachedExpiry =
     typeof data.expiresAtMs === "number" ? data.expiresAtMs : 0;
-  if (cachedAccess && (storedMode === "consumer" || cachedExpiry > now + 60_000)) {
-    return {
-      mode: storedMode,
-      accessToken: cachedAccess,
-      authScheme: asTrimmedString(data.authScheme) || (storedMode === "consumer" ? "Bearer" : "Bearer"),
-      apiBase:
-        storedMode === "consumer"
-          ? plaudConsumerApiBase(asTrimmedString(data.apiBase))
-          : strPlaudApiBase.value().replace(/\/$/, ""),
-    };
-  }
 
-  if (storedMode === "consumer" && cachedAccess) {
+  if (storedMode === "consumer") {
+    if (!cachedAccess && !cachedUserToken) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Plaud is not connected. Sign in at web.plaud.ai and paste the session token on the Calls tab."
+      );
+    }
+    const apiBase = plaudConsumerApiBase(asTrimmedString(data.apiBase));
+    const authScheme = asTrimmedString(data.authScheme) || "Bearer";
+    const needsWorkspace =
+      Boolean(cachedUserToken) &&
+      (!cachedAccess || plaudJwtTyp(cachedAccess) !== "WT" || plaudJwtExpired(cachedAccess));
+    if (needsWorkspace && cachedUserToken) {
+      const minted = await mintPlaudWorkspaceToken(cachedUserToken, apiBase, authScheme);
+      await db.doc(PLAUD_AUTH_DOC).set(
+        {
+          mode: "consumer",
+          accessToken: minted.token,
+          userToken: cachedUserToken,
+          authScheme: "Bearer",
+          apiBase: minted.apiBase,
+          workspaceId: minted.workspaceId,
+          expiresAtMs: Date.now() + 20 * 60 * 60 * 1000,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      return {
+        mode: "consumer",
+        accessToken: minted.token,
+        userToken: cachedUserToken,
+        authScheme: "Bearer",
+        apiBase: minted.apiBase,
+      };
+    }
     return {
       mode: "consumer",
       accessToken: cachedAccess,
+      userToken: cachedUserToken || undefined,
+      authScheme,
+      apiBase,
+    };
+  }
+
+  if (cachedAccess && cachedExpiry > now + 60_000) {
+    return {
+      mode: "developer",
+      accessToken: cachedAccess,
       authScheme: asTrimmedString(data.authScheme) || "Bearer",
-      apiBase: plaudConsumerApiBase(asTrimmedString(data.apiBase)),
+      apiBase: strPlaudApiBase.value().replace(/\/$/, ""),
     };
   }
 
@@ -1431,7 +1521,13 @@ async function plaudFetchJson(
   token: string,
   scheme: string,
   init?: { method?: string; body?: string }
-) {
+): Promise<{
+  ok: boolean;
+  status: number;
+  raw: string;
+  payload: Record<string, unknown>;
+  apiBase: string;
+}> {
   const response = await fetch(`${apiBase}${path}`, {
     method: init?.method || "GET",
     headers: plaudConsumerHeaders(token, scheme),
@@ -1444,7 +1540,11 @@ async function plaudFetchJson(
   } catch {
     payload = { raw: raw.slice(0, 180) };
   }
-  return { ok: response.ok, status: response.status, raw, payload };
+  const redirected = plaudRegionRedirect(payload);
+  if (redirected && redirected !== apiBase) {
+    return plaudFetchJson(redirected, path, token, scheme, init);
+  }
+  return { ok: response.ok, status: response.status, raw, payload, apiBase };
 }
 
 async function mintPlaudWorkspaceToken(userToken: string, apiBase: string, scheme: string) {
@@ -1454,41 +1554,77 @@ async function mintPlaudWorkspaceToken(userToken: string, apiBase: string, schem
     userToken,
     scheme
   );
+  const currentBase = listed.apiBase || apiBase;
   const data = asRecord(listed.payload.data);
-  const workspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
-  const personal =
-    workspaces
-      .map((item) => asRecord(item))
-      .find((item) => asTrimmedString(item.workspace_type) === "0") ||
-    asRecord(workspaces[0]);
-  const workspaceId =
-    asTrimmedString(personal.workspace_id) || asTrimmedString(personal.id);
-  if (!listed.ok || !workspaceId) {
+  const workspaces = (Array.isArray(data.workspaces) ? data.workspaces : [])
+    .map((item) => asRecord(item))
+    .sort((left, right) => {
+      const leftPersonal = workspaceTypeValue(left.workspace_type) === "0" ? 0 : 1;
+      const rightPersonal = workspaceTypeValue(right.workspace_type) === "0" ? 0 : 1;
+      return leftPersonal - rightPersonal;
+    });
+  if (!listed.ok || workspaces.length === 0) {
     throw new Error(
       asTrimmedString(listed.payload.msg) ||
         `Could not list Plaud workspaces (${listed.status})`
     );
   }
-  const minted = await plaudFetchJson(
-    apiBase,
-    `/user-app/auth/workspace/token/${encodeURIComponent(workspaceId)}`,
-    userToken,
-    scheme,
-    { method: "POST", body: "{}" }
-  );
-  const mintedData = asRecord(minted.payload.data);
-  const workspaceToken =
-    asTrimmedString(mintedData.workspace_token) ||
-    asTrimmedString(mintedData.workspaceToken) ||
-    asTrimmedString(mintedData.token) ||
-    asTrimmedString(minted.payload.workspace_token);
-  if (!minted.ok || !workspaceToken) {
+
+  let best:
+    | { token: string; workspaceId: string; libraryCount: number; apiBase: string }
+    | undefined;
+  for (const workspace of workspaces) {
+    const workspaceId =
+      asPlaudId(workspace.workspace_id) || asPlaudId(workspace.id);
+    if (!workspaceId) continue;
+    const minted = await plaudFetchJson(
+      currentBase,
+      `/user-app/auth/workspace/token/${encodeURIComponent(workspaceId)}`,
+      userToken,
+      scheme,
+      { method: "POST", body: "{}" }
+    );
+    const mintedData = asRecord(minted.payload.data);
+    const workspaceToken =
+      asTrimmedString(mintedData.workspace_token) ||
+      asTrimmedString(mintedData.workspaceToken) ||
+      asTrimmedString(mintedData.token) ||
+      asTrimmedString(minted.payload.workspace_token);
+    if (!minted.ok || !workspaceToken) continue;
+
+    const probe = await plaudFetchJson(
+      minted.apiBase || currentBase,
+      plaudWebListPath(0, 5, "0"),
+      workspaceToken,
+      "Bearer"
+    );
+    let count = plaudLibraryTotal(probe.payload) ?? plaudFilesFromPage(probe.payload).length;
+    if (count === 0) {
+      const allFiles = await plaudFetchJson(
+        probe.apiBase || currentBase,
+        plaudWebListPath(0, 5, "2"),
+        workspaceToken,
+        "Bearer"
+      );
+      count = plaudLibraryTotal(allFiles.payload) ?? plaudFilesFromPage(allFiles.payload).length;
+    }
+    if (!best || count > best.libraryCount) {
+      best = {
+        token: workspaceToken,
+        workspaceId,
+        libraryCount: count,
+        apiBase: probe.apiBase || currentBase,
+      };
+    }
+    if (count > 0) break;
+  }
+  if (!best) {
     throw new Error(
-      asTrimmedString(minted.payload.msg) ||
-        `Could not mint Plaud workspace token (${minted.status})`
+      asTrimmedString(listed.payload.msg) ||
+        "Could not mint a Plaud workspace token with access to recordings"
     );
   }
-  return workspaceToken;
+  return best;
 }
 
 async function plaudRequest<T>(path: string, retry = true): Promise<T> {
@@ -1503,18 +1639,46 @@ async function plaudRequest<T>(path: string, retry = true): Promise<T> {
   const response = await fetch(`${session.apiBase}${path}`, {
     headers,
   });
-  if (response.status === 401 && retry && session.mode === "developer") {
+  const raw = await response.text();
+  let payload: Record<string, unknown> = {};
+  try {
+    payload = asRecord(JSON.parse(raw || "{}"));
+  } catch {
+    payload = { raw: raw.slice(0, 180) };
+  }
+  const redirected = plaudRegionRedirect(payload);
+  if (redirected && redirected !== session.apiBase && retry) {
     await admin.firestore().doc(PLAUD_AUTH_DOC).set(
-      { accessToken: "", expiresAtMs: 0 },
+      { apiBase: redirected, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
       { merge: true }
     );
     return plaudRequest<T>(path, false);
   }
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Plaud API ${path} failed (${response.status}): ${detail.slice(0, 180)}`);
+  if (response.status === 401 && retry) {
+    if (session.mode === "developer") {
+      await admin.firestore().doc(PLAUD_AUTH_DOC).set(
+        { accessToken: "", expiresAtMs: 0 },
+        { merge: true }
+      );
+      return plaudRequest<T>(path, false);
+    }
+    if (session.mode === "consumer" && session.userToken) {
+      await admin.firestore().doc(PLAUD_AUTH_DOC).set(
+        { accessToken: "", expiresAtMs: 0 },
+        { merge: true }
+      );
+      return plaudRequest<T>(path, false);
+    }
   }
-  return (await response.json()) as T;
+  if (!response.ok) {
+    throw new Error(`Plaud API ${path} failed (${response.status}): ${raw.slice(0, 180)}`);
+  }
+  if (!plaudStatusOk(payload) && payload.status !== undefined) {
+    throw new Error(
+      `Plaud API ${path} failed (status ${String(payload.status)}): ${asTrimmedString(payload.msg) || raw.slice(0, 180)}`
+    );
+  }
+  return payload as T;
 }
 
 function plaudStatusOk(payload: Record<string, unknown>): boolean {
@@ -1532,35 +1696,43 @@ async function verifyPlaudWebToken(token: string, apiBase: string) {
   const schemes = ["Bearer", "bearer", "WT", "UT"];
   let lastDetail = "";
   for (const scheme of schemes) {
-    const listed = await plaudFetchJson(
-      apiBase,
-      "/file/simple/web?skip=0&limit=1",
-      token,
-      scheme
-    );
+    const listed = await plaudFetchJson(apiBase, plaudWebListPath(0, 5, "0"), token, scheme);
     lastDetail = asTrimmedString(listed.payload.msg) || listed.raw.slice(0, 180);
-    if (listed.ok && plaudStatusOk(listed.payload)) {
-      return { payload: listed.payload, authScheme: scheme, accessToken: token };
+    const currentBase = listed.apiBase || apiBase;
+    const files = plaudFilesFromPage(listed.payload);
+    const total = plaudLibraryTotal(listed.payload) ?? files.length;
+    const typ = plaudJwtTyp(token);
+    const emptyLibrary = total === 0 && files.length === 0;
+    if (listed.ok && plaudStatusOk(listed.payload) && typ !== "UT" && !emptyLibrary) {
+      return {
+        payload: listed.payload,
+        authScheme: scheme,
+        accessToken: token,
+        userToken: "",
+        apiBase: currentBase,
+        libraryCount: total,
+      };
     }
     try {
-      const workspaceToken = await mintPlaudWorkspaceToken(token, apiBase, scheme);
-      const retry = await plaudFetchJson(
-        apiBase,
-        "/file/simple/web?skip=0&limit=1",
-        workspaceToken,
-        "Bearer"
-      );
-      if (retry.ok && plaudStatusOk(retry.payload)) {
-        return { payload: retry.payload, authScheme: "Bearer", accessToken: workspaceToken };
+      const minted = await mintPlaudWorkspaceToken(token, currentBase, scheme);
+      if (minted.libraryCount > 0) {
+        return {
+          payload: listed.payload,
+          authScheme: "Bearer",
+          accessToken: minted.token,
+          userToken: token,
+          apiBase: minted.apiBase,
+          libraryCount: minted.libraryCount,
+        };
       }
-      lastDetail = asTrimmedString(retry.payload.msg) || retry.raw.slice(0, 180);
+      lastDetail = `Workspace token minted but Plaud returned ${minted.libraryCount} recordings`;
     } catch (error) {
       lastDetail = error instanceof Error ? error.message : lastDetail;
     }
   }
   throw new HttpsError(
     "invalid-argument",
-    `Plaud rejected that JWT (${describePlaudToken(token)}). ${lastDetail} A 360-character value is usually a user token. Copy the longer Authorization Bearer value from a live api.plaud.ai file request, or paste the user token again after this update so we can mint a workspace token.`
+    `Plaud connected but found no recordings (${describePlaudToken(token)}). ${lastDetail} Use the plumber's web.plaud.ai login, paste the whole Cookie line from an api.plaud.ai request, and confirm that account can see the calls.`
   );
 }
 
@@ -1655,25 +1827,50 @@ async function alreadyIngestedPlaudCall(fileId: string): Promise<PlaudSyncResult
   return null;
 }
 
-const PLAUD_WEB_LIST_QUERY = "is_trash=0&sort_by=start_time&is_desc=true";
-
 async function listPlaudFiles(
   maxPages = 6,
-  pageSize = 100
+  pageSize = 100,
+  retried = false
 ): Promise<{ files: PlaudFileSummary[]; total?: number }> {
   const session = await getPlaudSession();
   const files: PlaudFileSummary[] = [];
   let total: number | undefined;
   if (session.mode === "consumer") {
+    let trash = "0";
     for (let page = 0; page < maxPages; page += 1) {
-      const payload = await plaudRequest<unknown>(
-        `/file/simple/web?skip=${page * pageSize}&limit=${pageSize}&${PLAUD_WEB_LIST_QUERY}`
-      );
+      const payload = await plaudRequest<unknown>(plaudWebListPath(page * pageSize, pageSize, trash));
       if (total === undefined) total = plaudLibraryTotal(payload);
       const batch = plaudFilesFromPage(payload);
       files.push(...batch);
+      if (page === 0 && files.length === 0 && trash === "0") {
+        trash = "2";
+        total = undefined;
+        page = -1;
+        continue;
+      }
       if (batch.length === 0 || batch.length < pageSize) break;
       if (total !== undefined && files.length >= total) break;
+    }
+    if (files.length === 0 && session.userToken && !retried) {
+      const minted = await mintPlaudWorkspaceToken(
+        session.userToken,
+        session.apiBase,
+        session.authScheme || "Bearer"
+      );
+      await admin.firestore().doc(PLAUD_AUTH_DOC).set(
+        {
+          mode: "consumer",
+          accessToken: minted.token,
+          userToken: session.userToken,
+          authScheme: "Bearer",
+          apiBase: minted.apiBase,
+          workspaceId: minted.workspaceId,
+          expiresAtMs: Date.now() + 20 * 60 * 60 * 1000,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      return listPlaudFiles(maxPages, pageSize, true);
     }
     return { files, total: total ?? files.length };
   }
@@ -2114,15 +2311,14 @@ export const getPlaudConnection = onCall({ cors: true }, async () => {
   try {
     const session = await getPlaudSession();
     if (session.mode === "consumer") {
-      const payload = asRecord(
-        await plaudRequest<unknown>(`/file/simple/web?skip=0&limit=1&${PLAUD_WEB_LIST_QUERY}`)
-      );
-      const files = plaudFilesFromPage(payload);
+      const listed = await listPlaudFiles(1, 20);
       return {
         connected: true,
         mode: "web",
         name: "Plaud web account",
-        libraryCount: plaudLibraryTotal(payload) ?? files.length,
+        libraryCount: listed.total ?? listed.files.length,
+        apiBase: session.apiBase,
+        tokenType: plaudJwtTyp(session.accessToken) || "WT",
       };
     }
     const payload = asRecord(await plaudRequest<unknown>("/open/third-party/users/current"));
@@ -2162,15 +2358,22 @@ export const connectPlaudWebSession = onCall({ cors: true }, async (request) => 
     {
       mode: "consumer",
       accessToken: verified.accessToken,
+      userToken: verified.userToken || (plaudJwtTyp(token) === "UT" ? token : ""),
       authScheme: verified.authScheme,
-      apiBase,
+      apiBase: verified.apiBase || apiBase,
       refreshToken: "",
-      expiresAtMs: Date.now() + 30 * 24 * 60 * 60 * 1000,
+      expiresAtMs: Date.now() + 20 * 60 * 60 * 1000,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     },
     { merge: true }
   );
-  return { connected: true, mode: "web" };
+  return {
+    connected: true,
+    mode: "web",
+    libraryCount: verified.libraryCount,
+    apiBase: verified.apiBase || apiBase,
+    tokenType: plaudJwtTyp(verified.accessToken) || "WT",
+  };
 });
 
 export const syncPlaudCalls = onCall(
@@ -2234,7 +2437,7 @@ export const importPlaudTranscript = onCall(
   }
 );
 
-export const listPlaudCalls = onCall({ cors: true }, async (request) => {
+export const listPlaudCalls = onCall({ cors: true, timeoutSeconds: 120 }, async (request) => {
   const input = request.data as { date?: unknown; allTime?: unknown };
   const allTime = input.allTime === true;
   const date = asTrimmedString(input.date);
@@ -2245,13 +2448,58 @@ export const listPlaudCalls = onCall({ cors: true }, async (request) => {
   const snapshot = allTime
     ? await callsRef.limit(1000).get()
     : await callsRef.where("callDate", "==", date).limit(100).get();
-  return snapshot.docs
-    .map((document) => ({ id: document.id, ...document.data() }))
-    .sort((left, right) =>
-      asTrimmedString((right as { startedAt?: unknown }).startedAt).localeCompare(
-        asTrimmedString((left as { startedAt?: unknown }).startedAt)
-      )
-    );
+  const stored = snapshot.docs.map((document) => ({
+    id: document.id,
+    ...(document.data() as Record<string, unknown>),
+  }));
+  const byId = new Map(stored.map((item) => [asTrimmedString(item.id), item]));
+
+  let library: PlaudFileSummary[] = [];
+  try {
+    const listed = await listPlaudFiles(allTime ? 20 : 6, 100);
+    library = listed.files;
+    if (!allTime && date) {
+      library = library.filter((file) =>
+        fileMatchesPlaudWindow(file, { date })
+      );
+    }
+  } catch (error) {
+    if (stored.length === 0) {
+      throw error;
+    }
+  }
+
+  const merged = library.map((file) => {
+    const documentId = `plaud-${file.id}`.slice(0, 700);
+    const existing = byId.get(documentId) || byId.get(file.id);
+    if (existing) {
+      byId.delete(documentId);
+      byId.delete(file.id);
+      return existing;
+    }
+    const startedAt = asTrimmedString(file.start_at) || asTrimmedString(file.created_at);
+    return {
+      id: documentId,
+      callDate: callDateFromStartedAt(startedAt),
+      startedAt,
+      recordingName: asTrimmedString(file.name),
+      durationMs: file.duration ?? null,
+      transcript: "",
+      summary: "",
+      customerServiceTips: [],
+      appointmentMade: false,
+      status: "in_plaud",
+      source: "plaud-library",
+    };
+  });
+  for (const item of byId.values()) {
+    merged.push(item);
+  }
+  return merged.sort((left, right) =>
+    asTrimmedString((right as { startedAt?: unknown }).startedAt).localeCompare(
+      asTrimmedString((left as { startedAt?: unknown }).startedAt)
+    )
+  );
 });
 
 export const askPlaudCalls = onCall({ cors: true, timeoutSeconds: 120 }, async (request) => {

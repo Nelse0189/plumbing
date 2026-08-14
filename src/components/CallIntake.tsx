@@ -111,12 +111,12 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
           <h2>Plaud Call Intake · {listScope === 'all' ? 'all recordings' : selectedDate}</h2>
           <p>
             Import every recording from your Plaud account, or just the selected
-            date. Already saved calls are skipped. The list below shows
-            {' '}{listScope === 'all' ? 'every imported call' : `calls saved for ${selectedDate}`}.
+            date. The list below shows recordings Plaud currently has
+            {' '}{listScope === 'all' ? '(all time)' : `on ${selectedDate}`}, including ones not imported yet.
           </p>
           <p className={`call-intake__connection ${connection?.connected ? 'is-connected' : 'is-disconnected'}`}>
             {connection?.connected
-              ? `Connected to Plaud${connection.mode === 'web' ? ' via web.plaud.ai' : ''}${connection.name || connection.email ? ` · ${connection.name || connection.email}` : ''}${typeof connection.libraryCount === 'number' ? ` · ${connection.libraryCount} in Plaud` : ''}`
+              ? `Connected to Plaud${connection.mode === 'web' ? ' via web.plaud.ai' : ''}${connection.name || connection.email ? ` · ${connection.name || connection.email}` : ''}${connection.tokenType ? ` · ${connection.tokenType}` : ''}${connection.apiBase ? ` · ${connection.apiBase.replace(/^https:\/\//, '')}` : ''}${typeof connection.libraryCount === 'number' ? ` · ${connection.libraryCount} in Plaud` : ''}`
               : 'Plaud CLI login is currently blocked by a broken Plaud “bind device” page. Connect with a web.plaud.ai session token below.'}
           </p>
         </div>
@@ -339,7 +339,7 @@ console.log('click a Plaud recording now');`}</pre>
         <div className="call-intake__list-header">
           <h3>
             {calls.length} recording{calls.length === 1 ? '' : 's'}
-            {listScope === 'all' ? ' (all imported)' : ` (${selectedDate})`}
+            {listScope === 'all' ? ' (all from Plaud)' : ` (${selectedDate})`}
           </h3>
           <div className="call-intake__actions">
             <button
@@ -347,7 +347,7 @@ console.log('click a Plaud recording now');`}</pre>
               className={listScope === 'all' ? 'call-intake__primary' : undefined}
               onClick={() => setListScope('all')}
             >
-              Show all imported
+              Show all recordings
             </button>
             <button
               type="button"
@@ -373,6 +373,11 @@ console.log('click a Plaud recording now');`}</pre>
             {call.appointmentMade && (
               <p className="call-intake__appointment">
                 Water-heater appointment detected · Work order: {call.workOrderId}
+              </p>
+            )}
+            {call.status === 'in_plaud' && (
+              <p className="call-intake__waiting">
+                This recording is in Plaud. Click Import all Plaud calls to pull the transcript and summary.
               </p>
             )}
             {call.status === 'awaiting_transcript' && (
@@ -406,9 +411,11 @@ console.log('click a Plaud recording now');`}</pre>
         ))}
         {!loading && calls.length === 0 && (
           <p className="call-intake__empty">
-            {listScope === 'all'
-              ? 'No Plaud recordings have been imported yet. Click Import all Plaud calls to pull every recording from your account.'
-              : `No Plaud recordings saved for ${selectedDate}. Click Import all Plaud calls to pull every recording, or Sync this day for this date only.`}
+            {typeof connection?.libraryCount === 'number' && connection.libraryCount === 0
+              ? 'Plaud returned 0 recordings for this login. Sign in at web.plaud.ai as the plumber whose Note has the calls, then paste that account’s Cookie line and connect again.'
+              : listScope === 'all'
+                ? 'No Plaud recordings found yet. Connect the plumber’s Plaud account, then click Import all Plaud calls.'
+                : `No Plaud recordings found for ${selectedDate}. Switch to Show all recordings or click Import all Plaud calls.`}
           </p>
         )}
       </section>

@@ -160,8 +160,8 @@
   text-transform: capitalize;
 }
 
-.call-intake__status--processed {
-  color: var(--success) !important;
+.call-intake__status--in_plaud {
+  color: var(--accent) !important;
 }
 
 .call-intake__status--needs_review,

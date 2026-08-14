@@ -74,7 +74,7 @@ export interface PlaudCall {
   appointmentMade: boolean;
   workOrderId?: string;
   appointmentEvidence?: PlaudAppointmentEvidence;
-  status: 'processed' | 'needs_review' | 'failed' | 'awaiting_transcript' | 'processing';
+  status: 'processed' | 'needs_review' | 'failed' | 'awaiting_transcript' | 'processing' | 'in_plaud';
   error?: string;
   source?: string;
 }
@@ -86,6 +86,8 @@ export interface PlaudConnection {
   name?: string;
   error?: string;
   libraryCount?: number;
+  apiBase?: string;
+  tokenType?: string;
 }
 
 export interface PlaudSyncSummary {

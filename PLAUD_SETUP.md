@@ -113,8 +113,12 @@ Starter tier cannot list recordings.
    the confirming transcript sentence highlighted.
 5. Ask the day-chat questions such as "Which calls booked appointments?"
 
-If Plaud still shows a recording without a transcript, the app keeps it as
-`awaiting_transcript` and retries on the next sync.
+If the Calls tab still shows 0 recordings, the connected login is not the
+account that owns the files. Sign in at https://web.plaud.ai as the plumber
+whose Plaud Note made the recordings, then paste that session Cookie and
+click **Connect Plaud account**. A user token (`pld_ut`) can look connected
+while returning an empty library; the app now mints a workspace token and
+follows Plaud’s regional API automatically.
 
 ## Manual fallback
 
