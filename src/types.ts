@@ -101,6 +101,10 @@ export interface PlaudSyncSummary {
   failed: number;
   awaitingTranscript: number;
   appointments: number;
+  processed?: number;
+  saved?: number;
+  remaining?: number;
+  incomplete?: boolean;
   scope?: string;
   plaudTotal?: number;
 }

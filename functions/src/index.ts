@@ -1958,6 +1958,27 @@ function plaudFilesFromPage(payload: unknown): PlaudFileSummary[] {
     .filter((file): file is PlaudFileSummary => Boolean(file));
 }
 
+function plaudRecordNeedsProcessing(
+  previous: FirebaseFirestore.DocumentData | undefined
+): boolean {
+  if (!previous) return true;
+  const status = asTrimmedString(previous.status);
+  const transcript = asTrimmedString(previous.transcript);
+  const summary = asTrimmedString(previous.summary);
+  if (
+    !status ||
+    status === "failed" ||
+    status === "awaiting_transcript" ||
+    status === "in_plaud" ||
+    status === "processing"
+  ) {
+    return true;
+  }
+  if (transcript.length < 20 || !summary) return true;
+  if (asTrimmedString(previous.source) === "plaud-whisper") return true;
+  return false;
+}
+
 async function alreadyIngestedPlaudCall(fileId: string): Promise<PlaudSyncResult | null> {
   const documentId = `plaud-${fileId}`.slice(0, 700);
   const existing = await admin.firestore().collection(PLAUD_CALLS_COLLECTION).doc(documentId).get();
@@ -1976,6 +1997,15 @@ async function alreadyIngestedPlaudCall(fileId: string): Promise<PlaudSyncResult
     };
   }
   return null;
+}
+
+async function storedPlaudFileIfNeedsWork(
+  fileId: string
+): Promise<{ needsWork: boolean; previous: FirebaseFirestore.DocumentData }> {
+  const documentId = storedPlaudDocumentId(fileId);
+  const existing = await admin.firestore().collection(PLAUD_CALLS_COLLECTION).doc(documentId).get();
+  const previous = existing.data() || {};
+  return { needsWork: plaudRecordNeedsProcessing(existing.exists ? previous : undefined), previous };
 }
 
 async function listPlaudFiles(
@@ -2572,10 +2602,15 @@ async function applyPlaudLinkedTranscript(
   };
 }
 
-async function fetchPlaudTranssumm(fileId: string): Promise<unknown | null> {
+async function fetchPlaudTranssumm(
+  fileId: string,
+  timeoutMs = 90000
+): Promise<unknown | null> {
   const started = Date.now();
   let last: unknown = null;
-  while (Date.now() - started < 90000) {
+  const waitMs = Math.max(0, timeoutMs);
+  if (waitMs === 0) return null;
+  while (Date.now() - started < waitMs) {
     const payload = await plaudRequestOptional(
       `/ai/transsumm/${encodeURIComponent(fileId)}`,
       { method: "POST", json: { is_reload: 0, support_mul_summ: true } }
@@ -2599,7 +2634,10 @@ async function fetchPlaudTranssumm(fileId: string): Promise<unknown | null> {
   return last;
 }
 
-async function fetchPlaudFileDetail(fileId: string): Promise<PlaudFileDetail> {
+async function fetchPlaudFileDetail(
+  fileId: string,
+  options: { transsummTimeoutMs?: number } = {}
+): Promise<PlaudFileDetail> {
   const session = await getPlaudSession();
   if (session.mode !== "consumer") {
     const payload = await plaudRequest<unknown>(
@@ -2667,7 +2705,10 @@ async function fetchPlaudFileDetail(fileId: string): Promise<PlaudFileDetail> {
   best = await applyPlaudLinkedTranscript(best, payloadForLinks);
 
   if (!transcriptLooksSpeakerLabeled(plaudTranscriptFromDetail(best))) {
-    consider("ai/transsumm", await fetchPlaudTranssumm(fileId));
+    consider(
+      "ai/transsumm",
+      await fetchPlaudTranssumm(fileId, options.transsummTimeoutMs ?? 90000)
+    );
     best = await applyPlaudLinkedTranscript(best, payloadForLinks);
   }
 
@@ -2773,9 +2814,15 @@ async function transcribeAudioWithOpenAi(audio: Buffer, filename: string): Promi
 
 async function ingestPlaudFile(
   file: PlaudFileSummary,
-  options: { transcribeIfMissing?: boolean; fallbackTranscript?: string } = {}
+  options: {
+    transcribeIfMissing?: boolean;
+    fallbackTranscript?: string;
+    transsummTimeoutMs?: number;
+  } = {}
 ): Promise<PlaudSyncResult> {
-  const detail = await fetchPlaudFileDetail(file.id);
+  const detail = await fetchPlaudFileDetail(file.id, {
+    transsummTimeoutMs: options.transsummTimeoutMs,
+  });
   const startedAt =
     asTrimmedString(detail.start_at) ||
     asTrimmedString(detail.created_at) ||
@@ -2848,23 +2895,87 @@ function fileMatchesPlaudWindow(
   return parsed.getTime() >= cutoff;
 }
 
+async function listStoredPlaudFilesNeedingWork(): Promise<PlaudFileSummary[]> {
+  const snapshot = await admin.firestore().collection(PLAUD_CALLS_COLLECTION).limit(500).get();
+  const files: PlaudFileSummary[] = [];
+  for (const document of snapshot.docs) {
+    const data = document.data();
+    if (!plaudRecordNeedsProcessing(data)) continue;
+    const fileId = plaudApiFileId(document.id, asTrimmedString(data.callId));
+    if (!fileId || fileId.startsWith("manual-")) continue;
+    files.push({
+      id: fileId,
+      name: asTrimmedString(data.recordingName) || undefined,
+      created_at: asTrimmedString(data.startedAt) || undefined,
+      start_at: asTrimmedString(data.startedAt) || undefined,
+      duration: typeof data.durationMs === "number" ? data.durationMs : undefined,
+      serial_number: asTrimmedString(data.serialNumber) || undefined,
+    });
+  }
+  return files;
+}
+
 async function syncPlaudRecordings(options: {
   date?: string;
   days?: number;
   allTime?: boolean;
+  process?: boolean;
+  transcribeIfMissing?: boolean;
+  deadlineMs?: number;
 }) {
-  const listed = await listPlaudFiles(options.allTime ? 200 : 6);
-  const files = listed.files;
-  const matched = files.filter((file) => fileMatchesPlaudWindow(file, options));
+  const listed = await listPlaudFiles(options.allTime || options.process ? 200 : 6);
+  const filesById = new Map<string, PlaudFileSummary>();
+  for (const file of listed.files) {
+    if (fileMatchesPlaudWindow(file, options)) filesById.set(file.id, file);
+  }
+  if (options.process) {
+    for (const file of await listStoredPlaudFilesNeedingWork()) {
+      if (!fileMatchesPlaudWindow(file, options)) continue;
+      if (!filesById.has(file.id)) filesById.set(file.id, file);
+    }
+  }
+  const matched = [...filesById.values()].sort((left, right) =>
+    (asTrimmedString(right.start_at) || asTrimmedString(right.created_at)).localeCompare(
+      asTrimmedString(left.start_at) || asTrimmedString(left.created_at)
+    )
+  );
   const results: PlaudSyncResult[] = [];
-  for (const file of matched) {
+  let remaining = 0;
+  const transcribeIfMissing = options.transcribeIfMissing === true || options.process === true;
+  for (let index = 0; index < matched.length; index += 1) {
+    const file = matched[index];
+    if (options.deadlineMs && Date.now() >= options.deadlineMs) {
+      remaining = matched.length - index;
+      break;
+    }
     try {
+      if (options.process) {
+        const { needsWork, previous } = await storedPlaudFileIfNeedsWork(file.id);
+        if (!needsWork) {
+          results.push({
+            callId: file.id,
+            status: asTrimmedString(previous.status) || "processed",
+            skipped: true,
+            appointmentMade: previous.appointmentMade === true,
+            workOrderId: asTrimmedString(previous.workOrderId) || undefined,
+          });
+          continue;
+        }
+        results.push(
+          await ingestPlaudFile(file, {
+            transcribeIfMissing,
+            fallbackTranscript: asTrimmedString(previous.transcript),
+            transsummTimeoutMs: 20000,
+          })
+        );
+        continue;
+      }
       const existing = await alreadyIngestedPlaudCall(file.id);
       if (existing) {
         results.push(existing);
         continue;
       }
-      results.push(await ingestPlaudFile(file));
+      results.push(await ingestPlaudFile(file, { transcribeIfMissing }));
     } catch (error) {
       console.error(`Plaud ingest failed for ${file.id}:`, error);
       results.push({
@@ -2873,15 +2984,29 @@ async function syncPlaudRecordings(options: {
       });
     }
   }
+  const processed = results.filter(
+    (item) => !item.skipped && item.status !== "failed" && item.status !== "awaiting_transcript"
+  ).length;
+  const saved = results.filter((item) => !item.skipped).length;
   return {
-    scanned: files.length,
+    scanned: listed.files.length,
     matched: matched.length,
     imported: results.filter((item) => !item.skipped && item.status !== "failed").length,
     skipped: results.filter((item) => item.skipped).length,
     failed: results.filter((item) => item.status === "failed").length,
     awaitingTranscript: results.filter((item) => item.status === "awaiting_transcript").length,
     appointments: results.filter((item) => item.appointmentMade).length,
-    scope: options.allTime ? "all-time" : options.date || `${options.days ?? 2}-days`,
+    processed,
+    saved,
+    remaining,
+    incomplete: remaining > 0,
+    scope: options.process
+      ? options.allTime
+        ? "process-all"
+        : `process-${options.date || `${options.days ?? 2}-days`}`
+      : options.allTime
+        ? "all-time"
+        : options.date || `${options.days ?? 2}-days`,
     plaudTotal: listed.total,
     results,
   };
@@ -2974,6 +3099,31 @@ export const syncPlaudCalls = onCall(
   }
 );
 
+export const processPlaudCalls = onCall(
+  { cors: true, timeoutSeconds: 3600, memory: "1GiB" },
+  async (request) => {
+    const input = request.data as {
+      date?: unknown;
+      days?: unknown;
+      allTime?: unknown;
+    };
+    const allTime = input.allTime === true;
+    const date = asTrimmedString(input.date);
+    const days = typeof input.days === "number" ? input.days : undefined;
+    if (!allTime && !date && !days) {
+      throw new HttpsError("invalid-argument", "Provide a date, a day count, or allTime");
+    }
+    return syncPlaudRecordings({
+      date: date || undefined,
+      days,
+      allTime,
+      process: true,
+      transcribeIfMissing: true,
+      deadlineMs: Date.now() + (allTime ? 25 : 7) * 60 * 1000,
+    });
+  }
+);
+
 export const syncPlaudCallsScheduled = onSchedule(
   {
     schedule: "every 15 minutes",
@@ -2991,8 +3141,21 @@ export const syncPlaudCallsScheduled = onSchedule(
       console.log("Plaud sync skipped: no Plaud token configured");
       return;
     }
-    const result = await syncPlaudRecordings({ days: 2 });
-    console.log("Plaud scheduled sync", result);
+    const result = await syncPlaudRecordings({
+      days: 2,
+      process: true,
+      transcribeIfMissing: true,
+      deadlineMs: Date.now() + 7 * 60 * 1000,
+    });
+    console.log("Plaud scheduled sync", {
+      matched: result.matched,
+      processed: result.processed,
+      saved: result.saved,
+      skipped: result.skipped,
+      remaining: result.remaining,
+      failed: result.failed,
+      awaitingTranscript: result.awaitingTranscript,
+    });
   }
 );
 

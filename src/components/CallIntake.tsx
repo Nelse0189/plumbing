@@ -8,6 +8,7 @@ import {
   importPlaudTranscript,
   listPlaudCalls,
   processPlaudCall,
+  processPlaudCalls,
   syncPlaudCalls,
 } from '../services/plaudService';
 import {
@@ -389,8 +390,10 @@ export default function CallIntake({
       ]);
       setCalls(nextCalls);
       setConnection(nextConnection);
+      return nextCalls;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      return [] as PlaudCall[];
     } finally {
       setLoading(false);
     }
@@ -456,22 +459,56 @@ export default function CallIntake({
     setSummaryCall(call);
   };
 
+  const runServerProcessJob = async (input: { allTime?: boolean; date?: string }) => {
+    let pass = 0;
+    let last: PlaudSyncSummary | null = null;
+    do {
+      pass += 1;
+      setProcessProgress(
+        last?.remaining
+          ? `Saved ${last.saved || 0} to Firebase, ${last.remaining} left (pass ${pass})…`
+          : `Processing calls on the server and saving to Firebase (pass ${pass})…`
+      );
+      last = await processPlaudCalls(input);
+      setSyncSummary(last);
+      await reload();
+    } while (Boolean(last.incomplete) && (last.remaining || 0) > 0 && pass < 20);
+    return last;
+  };
+
   const handleProcessVisibleCalls = async () => {
-    const alreadySummarized = visibleCalls.filter(
-      (call) => !callNeedsProcessing(call) && Boolean(call.summary || call.plaudSummary)
-    );
-    const pending = visibleCalls.filter(callNeedsProcessing);
     setProcessingAll(true);
     setError(null);
-    const processed: PlaudCall[] = [];
     try {
-      for (let index = 0; index < pending.length; index += 1) {
-        const call = pending[index];
-        setProcessProgress(`Processing ${index + 1} of ${pending.length}…`);
-        const result = await handleProcessCall(call, false);
-        if (result) processed.push(result);
-      }
-      setSummaryCalls([...alreadySummarized, ...processed]);
+      await runServerProcessJob({ date: selectedDate });
+      const next = await reload();
+      const forPopup = next
+        .filter((call) => callDateOf(call) === selectedDate)
+        .filter((call) => Boolean(call.summary || call.plaudSummary));
+      setSummaryCalls(forPopup);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setProcessingAll(false);
+      setProcessProgress('');
+    }
+  };
+
+  const handleProcessAllCalls = async () => {
+    if (
+      !window.confirm(
+        'Process every Plaud recording and save transcripts and summaries to Firebase? Calls that are already finished are skipped. Leave this page open until it finishes.'
+      )
+    ) {
+      return;
+    }
+    setProcessingAll(true);
+    setError(null);
+    setListScope('all');
+    try {
+      await runServerProcessJob({ allTime: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setProcessingAll(false);
       setProcessProgress('');
@@ -503,9 +540,9 @@ export default function CallIntake({
             {listScope === 'all' ? 'all recordings' : formatLongDate(selectedDate)}
           </h2>
           <p>
-            Import every recording from your Plaud account, or jump to yesterday
-            and earlier days. The list below shows recordings Plaud currently has
-            {' '}{listScope === 'all' ? '(all time)' : `on ${formatLongDate(selectedDate)}`}, including ones not imported yet.
+            Process all recordings on the server and save transcripts, dispatcher
+            summaries, and work orders to Firebase. New calls from the last two
+            days are also processed automatically about every 15 minutes.
           </p>
           <p className={`call-intake__connection ${connection?.connected ? 'is-connected' : 'is-disconnected'}`}>
             {connection?.connected
@@ -517,7 +554,17 @@ export default function CallIntake({
           <button
             type="button"
             className="call-intake__primary"
-            disabled={syncing || !connection?.connected}
+            disabled={syncing || processingAll || !connection?.connected}
+            onClick={() => void handleProcessAllCalls()}
+          >
+            {processingAll && listScope === 'all'
+              ? processProgress || 'Processing all calls…'
+              : 'Process all calls & save'}
+          </button>
+          <button
+            type="button"
+            className="call-intake__primary"
+            disabled={syncing || processingAll || !connection?.connected}
             onClick={async () => {
               if (
                 !window.confirm(
@@ -544,7 +591,7 @@ export default function CallIntake({
           </button>
           <button
             type="button"
-            disabled={syncing || !connection?.connected}
+            disabled={syncing || processingAll || !connection?.connected}
             onClick={async () => {
               setSyncMode('day');
               setError(null);
@@ -618,12 +665,12 @@ export default function CallIntake({
           <button
             type="button"
             className="call-intake__primary"
-            disabled={processingAll || processingCallId !== null || visibleCalls.length === 0}
+            disabled={processingAll || processingCallId !== null || syncing || visibleCalls.length === 0}
             onClick={() => void handleProcessVisibleCalls()}
           >
             {processingAll
               ? processProgress || 'Processing calls…'
-              : 'Process calls & show summaries'}
+              : `Process ${formatLongDate(selectedDate)} & save`}
           </button>
           <button
             type="button"
@@ -758,14 +805,21 @@ console.log('click a Plaud recording now');`}</pre>
 
       {syncSummary && (
         <p className="call-intake__sync">
-          {syncSummary.scope === 'all-time'
-            ? 'Imported all Plaud recordings'
-            : `Synced ${syncSummary.scope || selectedDate}`}
+          {syncSummary.scope?.startsWith('process')
+            ? 'Processed Plaud recordings and saved them to Firebase'
+            : syncSummary.scope === 'all-time'
+              ? 'Imported all Plaud recordings'
+              : `Synced ${syncSummary.scope || selectedDate}`}
           {typeof syncSummary.plaudTotal === 'number' ? ` · Plaud library ${syncSummary.plaudTotal}` : ''}
           {' '}· {syncSummary.matched} of {syncSummary.scanned} files ·
-          {' '}{syncSummary.imported} imported · {syncSummary.skipped} already saved ·
+          {' '}{syncSummary.saved ?? syncSummary.imported} saved ·
+          {' '}{syncSummary.processed ?? 0} analyzed ·
+          {' '}{syncSummary.skipped} already done ·
           {' '}{syncSummary.awaitingTranscript} waiting on transcripts ·
-          {' '}{syncSummary.appointments} appointments · {syncSummary.failed} failed.
+          {' '}{syncSummary.appointments} appointments · {syncSummary.failed} failed
+          {syncSummary.incomplete && (syncSummary.remaining || 0) > 0
+            ? ` · ${syncSummary.remaining} still queued`
+            : '.'}
         </p>
       )}
 

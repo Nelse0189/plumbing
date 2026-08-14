@@ -39,6 +39,18 @@ export async function syncPlaudCalls(input: {
   return result.data;
 }
 
+export async function processPlaudCalls(input: {
+  date?: string;
+  days?: number;
+  allTime?: boolean;
+}): Promise<PlaudSyncSummary> {
+  const call = httpsCallable<typeof input, PlaudSyncSummary>(functions, 'processPlaudCalls', {
+    timeout: input.allTime ? 30 * 60 * 1000 : 9 * 60 * 1000,
+  });
+  const result = await call(input);
+  return result.data;
+}
+
 export async function processPlaudCall(input: {
   callId: string;
   force?: boolean;
