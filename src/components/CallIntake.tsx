@@ -62,6 +62,14 @@ function formatDuration(ms?: number | null): string {
   return `${seconds}s`;
 }
 
+function callDateOf(call: PlaudCall): string {
+  if (call.callDate) return call.callDate;
+  if (!call.startedAt) return '';
+  const parsed = new Date(call.startedAt);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+}
+
 function callNeedsProcessing(call: PlaudCall): boolean {
   return (
     call.status === 'in_plaud' ||
@@ -350,14 +358,12 @@ export default function CallIntake({
   const [dayJobs, setDayJobs] = useState<DaySchedulingInfo | null>(null);
   const [loadingDayJobs, setLoadingDayJobs] = useState(false);
 
-  const reload = async (scope: 'day' | 'all' = listScope) => {
+  const reload = async () => {
     setLoading(true);
     setError(null);
     try {
       const [nextCalls, nextConnection] = await Promise.all([
-        listPlaudCalls(
-          scope === 'all' ? { allTime: true } : { date: selectedDate }
-        ),
+        listPlaudCalls({ allTime: true }),
         getPlaudConnection(),
       ]);
       setCalls(nextCalls);
@@ -370,34 +376,18 @@ export default function CallIntake({
   };
 
   useEffect(() => {
-    let cancelled = false;
-    setAnswer('');
-    setLoading(true);
-    setError(null);
-    void Promise.all([
-      listPlaudCalls(
-        listScope === 'all' ? { allTime: true } : { date: selectedDate }
-      ),
-      getPlaudConnection(),
-    ])
-      .then(([nextCalls, nextConnection]) => {
-        if (cancelled) return;
-        setCalls(nextCalls);
-        setConnection(nextConnection);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedDate, listScope]);
+    void reload();
+    // Load the full library once; day chips filter it locally.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const visibleCalls = useMemo(() => {
+    if (listScope === 'all') return calls;
+    return calls.filter((call) => callDateOf(call) === selectedDate);
+  }, [calls, listScope, selectedDate]);
 
   const goToDate = (date: string) => {
+    setError(null);
     onSelectDate(date);
     setListScope('day');
   };
@@ -442,10 +432,10 @@ export default function CallIntake({
   };
 
   const handleProcessVisibleCalls = async () => {
-    const alreadySummarized = calls.filter(
+    const alreadySummarized = visibleCalls.filter(
       (call) => !callNeedsProcessing(call) && Boolean(call.summary || call.plaudSummary)
     );
-    const pending = calls.filter(callNeedsProcessing);
+    const pending = visibleCalls.filter(callNeedsProcessing);
     setProcessingAll(true);
     setError(null);
     const processed: PlaudCall[] = [];
@@ -517,7 +507,7 @@ export default function CallIntake({
                 const summary = await syncPlaudCalls({ allTime: true });
                 setSyncSummary(summary);
                 setListScope('all');
-                await reload('all');
+                await reload();
               } catch (err) {
                 setError(err instanceof Error ? err.message : String(err));
               } finally {
@@ -537,7 +527,7 @@ export default function CallIntake({
                 const summary = await syncPlaudCalls({ date: selectedDate });
                 setSyncSummary(summary);
                 setListScope('day');
-                await reload('day');
+                await reload();
               } catch (err) {
                 setError(err instanceof Error ? err.message : String(err));
               } finally {
@@ -603,7 +593,7 @@ export default function CallIntake({
           <button
             type="button"
             className="call-intake__primary"
-            disabled={processingAll || processingCallId !== null || calls.length === 0}
+            disabled={processingAll || processingCallId !== null || visibleCalls.length === 0}
             onClick={() => void handleProcessVisibleCalls()}
           >
             {processingAll
@@ -767,7 +757,7 @@ console.log('click a Plaud recording now');`}</pre>
           />
           <button
             type="button"
-            disabled={asking || !question.trim() || calls.length === 0}
+            disabled={asking || !question.trim() || visibleCalls.length === 0}
             onClick={async () => {
               setAsking(true);
               try {
@@ -788,7 +778,7 @@ console.log('click a Plaud recording now');`}</pre>
       <section className="call-intake__calls">
         <div className="call-intake__list-header">
           <h3>
-            {calls.length} recording{calls.length === 1 ? '' : 's'}
+            {visibleCalls.length} recording{visibleCalls.length === 1 ? '' : 's'}
             {listScope === 'all' ? ' (all from Plaud)' : ` (${formatLongDate(selectedDate)})`}
           </h3>
           <div className="call-intake__actions">
@@ -808,7 +798,7 @@ console.log('click a Plaud recording now');`}</pre>
             </button>
           </div>
         </div>
-        {calls.map((call) => (
+        {visibleCalls.map((call) => (
           <article key={call.id} className="call-intake__call">
             <header>
               <strong>{call.recordingName || call.callerPhone || 'Untitled Plaud recording'}</strong>
@@ -878,7 +868,7 @@ console.log('click a Plaud recording now');`}</pre>
             )}
           </article>
         ))}
-        {!loading && calls.length === 0 && (
+        {!loading && visibleCalls.length === 0 && (
           <p className="call-intake__empty">
             {typeof connection?.libraryCount === 'number' && connection.libraryCount === 0
               ? 'Plaud returned 0 recordings for this login. Sign in at web.plaud.ai as the plumber whose Note has the calls, then paste that account’s Cookie line and connect again.'

@@ -2538,70 +2538,64 @@ export const processPlaudCall = onCall(
   }
 );
 
-export const listPlaudCalls = onCall({ cors: true, timeoutSeconds: 120 }, async (request) => {
-  const input = request.data as { date?: unknown; allTime?: unknown };
-  const allTime = input.allTime === true;
-  const date = asTrimmedString(input.date);
-  if (!allTime && !date) {
-    throw new HttpsError("invalid-argument", "Provide a date or allTime");
-  }
-  const callsRef = admin.firestore().collection(PLAUD_CALLS_COLLECTION);
-  const snapshot = allTime
-    ? await callsRef.limit(1000).get()
-    : await callsRef.where("callDate", "==", date).limit(100).get();
-  const stored = snapshot.docs.map((document) => ({
-    id: document.id,
-    ...(document.data() as Record<string, unknown>),
-  }));
-  const byId = new Map(stored.map((item) => [asTrimmedString(item.id), item]));
+export const listPlaudCalls = onCall(
+  { cors: true, timeoutSeconds: 120, memory: "1GiB" },
+  async (request) => {
+    const input = request.data as { date?: unknown; allTime?: unknown };
+    const allTime = input.allTime === true;
+    const date = asTrimmedString(input.date);
+    if (!allTime && !date) {
+      throw new HttpsError("invalid-argument", "Provide a date or allTime");
+    }
+    const callsRef = admin.firestore().collection(PLAUD_CALLS_COLLECTION);
+    const snapshot = allTime
+      ? await callsRef.limit(500).get()
+      : await callsRef.where("callDate", "==", date).limit(100).get();
+    const stored = snapshot.docs.map((document) =>
+      serializePlaudCall(document.id, document.data() || {})
+    );
+    const mergedById = new Map<string, ReturnType<typeof serializePlaudCall>>();
+    for (const item of stored) {
+      mergedById.set(item.id, item);
+    }
 
-  let library: PlaudFileSummary[] = [];
-  try {
-    const listed = await listPlaudFiles(allTime ? 20 : 6, 100);
-    library = listed.files;
-    if (!allTime && date) {
-      library = library.filter((file) =>
-        fileMatchesPlaudWindow(file, { date })
+    let library: PlaudFileSummary[] = [];
+    try {
+      // Day switches should not re-download the whole Plaud library.
+      const listed = await listPlaudFiles(allTime ? 4 : 1, 50);
+      library = listed.files;
+      if (!allTime && date) {
+        library = library.filter((file) => fileMatchesPlaudWindow(file, { date }));
+      }
+    } catch (error) {
+      console.error("Plaud library list failed", error);
+    }
+
+    for (const file of library) {
+      const documentId = `plaud-${file.id}`.slice(0, 700);
+      if (mergedById.has(documentId)) continue;
+      const startedAt = asTrimmedString(file.start_at) || asTrimmedString(file.created_at);
+      mergedById.set(
+        documentId,
+        serializePlaudCall(documentId, {
+          callDate: callDateFromStartedAt(startedAt),
+          startedAt,
+          recordingName: asTrimmedString(file.name),
+          durationMs: file.duration ?? null,
+          transcript: "",
+          summary: "",
+          customerServiceTips: [],
+          appointmentMade: false,
+          status: "in_plaud",
+          source: "plaud-library",
+        })
       );
     }
-  } catch (error) {
-    if (stored.length === 0) {
-      throw error;
-    }
+    return [...mergedById.values()].sort((left, right) =>
+      asTrimmedString(right.startedAt).localeCompare(asTrimmedString(left.startedAt))
+    );
   }
-
-  const merged = library.map((file) => {
-    const documentId = `plaud-${file.id}`.slice(0, 700);
-    const existing = byId.get(documentId) || byId.get(file.id);
-    if (existing) {
-      byId.delete(documentId);
-      byId.delete(file.id);
-      return existing;
-    }
-    const startedAt = asTrimmedString(file.start_at) || asTrimmedString(file.created_at);
-    return {
-      id: documentId,
-      callDate: callDateFromStartedAt(startedAt),
-      startedAt,
-      recordingName: asTrimmedString(file.name),
-      durationMs: file.duration ?? null,
-      transcript: "",
-      summary: "",
-      customerServiceTips: [],
-      appointmentMade: false,
-      status: "in_plaud",
-      source: "plaud-library",
-    };
-  });
-  for (const item of byId.values()) {
-    merged.push(item);
-  }
-  return merged.sort((left, right) =>
-    asTrimmedString((right as { startedAt?: unknown }).startedAt).localeCompare(
-      asTrimmedString((left as { startedAt?: unknown }).startedAt)
-    )
-  );
-});
+);
 
 export const askPlaudCalls = onCall({ cors: true, timeoutSeconds: 120 }, async (request) => {
   const input = request.data as { date?: unknown; question?: unknown };
