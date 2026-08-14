@@ -836,12 +836,13 @@ console.log('click a Plaud recording now');`}</pre>
             )}
             {call.status === 'in_plaud' && (
               <p className="call-intake__waiting">
-                This recording is in Plaud. Click Process or Summary to pull the transcript and show the dispatcher summary.
+                This recording is in Plaud. Click Process to pull the transcript Plaud already has and show the summary.
               </p>
             )}
             {call.status === 'awaiting_transcript' && (
               <p className="call-intake__waiting">
-                Plaud has the recording, but the transcript is not ready yet. Sync again after Plaud finishes processing.
+                {call.error ||
+                  'Plaud has the recording, but the transcript is not in this app yet. Click Process to pull it from Plaud.'}
               </p>
             )}
             {call.error && <p className="call-intake__error">{call.error}</p>}

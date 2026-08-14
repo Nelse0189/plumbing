@@ -1138,12 +1138,15 @@ type PlaudFileSummary = {
 type PlaudDataItem = {
   data_type?: string;
   data_content?: string;
+  data_link?: string;
+  data_id?: string;
 };
 
 type PlaudFileDetail = PlaudFileSummary & {
   presigned_url?: string;
   source_list?: PlaudDataItem[];
   note_list?: PlaudDataItem[];
+  content_list?: PlaudDataItem[];
   transcriptText?: string;
 };
 
@@ -2082,7 +2085,10 @@ async function ingestPlaudCallRecord(input: {
       plaudSummary: asTrimmedString(input.plaudSummary),
       status: transcript.length >= 20 ? "processing" : "awaiting_transcript",
       source: asTrimmedString(input.source) || "plaud",
-      error: admin.firestore.FieldValue.delete(),
+      error:
+        transcript.length >= 20
+          ? admin.firestore.FieldValue.delete()
+          : "Plaud has this recording, but no transcript came back yet. If you can already read it on web.plaud.ai, click Process again.",
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       createdAt: existing.exists
         ? previous.createdAt || admin.firestore.FieldValue.serverTimestamp()
@@ -2196,6 +2202,9 @@ function unwrapConsumerFile(payload: unknown): PlaudFileDetail {
     plaudEpochToIso(source.start_time) ||
     asTrimmedString(source.start_at) ||
     asTrimmedString(source.created_at);
+  const contentList = Array.isArray(source.content_list)
+    ? (source.content_list as PlaudDataItem[])
+    : [];
   return {
     id: plaudFileId(source),
     name:
@@ -2212,8 +2221,13 @@ function unwrapConsumerFile(payload: unknown): PlaudFileDetail {
       asTrimmedString(source.serial_number) ||
       asTrimmedString(source.serialNumber) ||
       undefined,
-    source_list: [],
-    note_list: [],
+    source_list: Array.isArray(source.source_list)
+      ? (source.source_list as PlaudDataItem[])
+      : [],
+    note_list: Array.isArray(source.note_list)
+      ? (source.note_list as PlaudDataItem[])
+      : [],
+    content_list: contentList,
     transcriptText:
       segmentsToTranscript(segments) ||
       asTrimmedString(trans.text) ||
@@ -2221,16 +2235,131 @@ function unwrapConsumerFile(payload: unknown): PlaudFileDetail {
   };
 }
 
+function pickPlaudContent(
+  items: PlaudDataItem[] | undefined,
+  types: string[]
+): PlaudDataItem | undefined {
+  for (const type of types) {
+    const match = (items || []).find(
+      (item) => asTrimmedString(item.data_type) === type
+    );
+    if (match) return match;
+  }
+  return undefined;
+}
+
+async function fetchPlaudLinkedText(url: string): Promise<string> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
+  if (!response.ok) {
+    throw new Error(`Plaud transcript download failed (${response.status})`);
+  }
+  return response.text();
+}
+
+function transcriptFromLinkedPayload(raw: string): string {
+  const trimmed = asTrimmedString(raw);
+  if (!trimmed) return "";
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(parsed)) return segmentsToTranscript(parsed);
+    const record = asRecord(parsed);
+    if (Array.isArray(record.segments)) return segmentsToTranscript(record.segments);
+    if (Array.isArray(record.data)) return segmentsToTranscript(record.data);
+    return (
+      asTrimmedString(record.text) ||
+      asTrimmedString(record.content) ||
+      asTrimmedString(record.transcript) ||
+      trimmed
+    );
+  } catch {
+    return trimmed;
+  }
+}
+
+function summaryFromLinkedPayload(raw: string): string {
+  const trimmed = asTrimmedString(raw);
+  if (!trimmed) return "";
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    const record = asRecord(parsed);
+    return (
+      asTrimmedString(record.markdown) ||
+      asTrimmedString(record.content) ||
+      asTrimmedString(record.text) ||
+      asTrimmedString(record.summary) ||
+      trimmed
+    );
+  } catch {
+    return trimmed;
+  }
+}
+
+async function resolvePlaudLinkedContent(
+  item: PlaudDataItem | undefined,
+  preloaded: Map<string, string>
+): Promise<string> {
+  if (!item) return "";
+  const fromPre = asTrimmedString(preloaded.get(asTrimmedString(item.data_id)));
+  if (fromPre) return fromPre;
+  if (asTrimmedString(item.data_content)) return asTrimmedString(item.data_content);
+  const link = asTrimmedString(item.data_link);
+  if (!link) return "";
+  return fetchPlaudLinkedText(link);
+}
+
 async function fetchPlaudFileDetail(fileId: string): Promise<PlaudFileDetail> {
   const session = await getPlaudSession();
-  if (session.mode === "consumer") {
-    return unwrapConsumerFile(
-      await plaudRequest<unknown>(`/file/detail/${encodeURIComponent(fileId)}`)
+  if (session.mode !== "consumer") {
+    return unwrapPlaudFile(
+      await plaudRequest<unknown>(`/open/third-party/files/${encodeURIComponent(fileId)}`)
     );
   }
-  return unwrapPlaudFile(
-    await plaudRequest<unknown>(`/open/third-party/files/${encodeURIComponent(fileId)}`)
-  );
+  const payload = await plaudRequest<unknown>(`/file/detail/${encodeURIComponent(fileId)}`);
+  const detail = unwrapConsumerFile(payload);
+  const source = asRecord(asRecord(payload).data);
+  const preloaded = new Map<string, string>();
+  const preList = Array.isArray(source.pre_download_content_list)
+    ? source.pre_download_content_list
+    : [];
+  for (const item of preList) {
+    const record = asRecord(item);
+    const id = asTrimmedString(record.data_id);
+    if (id) preloaded.set(id, asTrimmedString(record.data_content));
+  }
+  const transcriptItem = pickPlaudContent(detail.content_list, [
+    "transaction_polish",
+    "transaction",
+  ]);
+  const summaryItem = pickPlaudContent(detail.content_list, [
+    "auto_sum_note",
+    "sum_multi_note",
+  ]);
+  let transcript = plaudTranscriptFromDetail(detail);
+  if (transcript.length < 20) {
+    transcript = transcriptFromLinkedPayload(
+      await resolvePlaudLinkedContent(transcriptItem, preloaded)
+    );
+  }
+  let plaudSummary = plaudSummaryFromDetail(detail);
+  if (!plaudSummary) {
+    plaudSummary = summaryFromLinkedPayload(
+      await resolvePlaudLinkedContent(summaryItem, preloaded)
+    );
+  }
+  console.log("Plaud file detail transcript", {
+    fileId,
+    contentTypes: (detail.content_list || []).map((item) => item.data_type),
+    hasTranscriptLink: Boolean(asTrimmedString(transcriptItem?.data_link)),
+    transcriptChars: transcript.length,
+    summaryChars: plaudSummary.length,
+  });
+  return {
+    ...detail,
+    transcriptText: transcript,
+    note_list: plaudSummary
+      ? [{ data_type: "auto_sum_note", data_content: plaudSummary }]
+      : detail.note_list,
+  };
 }
 
 async function ingestPlaudFile(file: PlaudFileSummary): Promise<PlaudSyncResult> {
@@ -2475,7 +2604,7 @@ function serializePlaudCall(documentId: string, data: admin.firestore.DocumentDa
 }
 
 export const processPlaudCall = onCall(
-  { cors: true, timeoutSeconds: 180 },
+  { cors: true, timeoutSeconds: 180, memory: "1GiB" },
   async (request) => {
     const input = request.data as { callId?: unknown; force?: unknown };
     const requestedId = asTrimmedString(input.callId);
