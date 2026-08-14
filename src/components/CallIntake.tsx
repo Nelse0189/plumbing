@@ -78,6 +78,13 @@ function callDateOf(call: PlaudCall): string {
   return parsed.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
+function compareCallsForList(left: PlaudCall, right: PlaudCall): number {
+  if (left.appointmentMade !== right.appointmentMade) {
+    return left.appointmentMade ? -1 : 1;
+  }
+  return (right.startedAt || '').localeCompare(left.startedAt || '');
+}
+
 function callNeedsProcessing(call: PlaudCall): boolean {
   return (
     call.status === 'in_plaud' ||
@@ -515,8 +522,9 @@ export default function CallIntake({
   }, [connectWithToken]);
 
   const visibleCalls = useMemo(() => {
-    if (listScope === 'all') return calls;
-    return calls.filter((call) => callDateOf(call) === selectedDate);
+    const filtered =
+      listScope === 'all' ? calls : calls.filter((call) => callDateOf(call) === selectedDate);
+    return [...filtered].sort(compareCallsForList);
   }, [calls, listScope, selectedDate]);
 
   const goToDate = (date: string) => {
