@@ -91,12 +91,14 @@ PLAUD_REFRESH_TOKEN=paste-refresh-token-here
 PLAUD_API_BASE=https://platform.plaud.ai/developer/api
 ```
 
-Deploy functions after saving the token:
+Deploy functions after saving the token. From the **repo root** (not `functions/`):
 
 ```bash
-npm --prefix functions run build
-firebase deploy --only functions,firestore:rules
+npx firebase-tools login
+npm run deploy:functions
 ```
+
+There is no global `firebase` command in this project. Use `npx firebase-tools` or `npm run deploy:functions`.
 
 Plaud's developer API requires a paid Plaud plan (Pro or Unlimited). The free
 Starter tier cannot list recordings.
