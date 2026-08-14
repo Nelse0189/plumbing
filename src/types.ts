@@ -51,6 +51,8 @@ export interface StoredWorkOrder extends WorkOrder {
   status: 'needs_review' | 'unscheduled' | 'scheduling' | 'scheduled' | 'closed';
   selectedTime?: string;
   cached?: boolean;
+  callSummary?: string;
+  source?: string;
 }
 
 export interface PlaudAppointmentEvidence {

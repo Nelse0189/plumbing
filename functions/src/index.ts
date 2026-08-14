@@ -2034,6 +2034,7 @@ async function ingestPlaudCallRecord(input: {
   serialNumber?: string;
   plaudSummary?: string;
   source?: string;
+  force?: boolean;
 }): Promise<PlaudSyncResult> {
   const callId = asTrimmedString(input.callId);
   const transcript = asTrimmedString(input.transcript);
@@ -2048,6 +2049,7 @@ async function ingestPlaudCallRecord(input: {
   const existing = await callRef.get();
   const previous = existing.data() || {};
   if (
+    !input.force &&
     existing.exists &&
     transcript.length >= 20 &&
     asTrimmedString(previous.transcript) === transcript &&
@@ -2433,6 +2435,106 @@ export const importPlaudTranscript = onCall(
       recordingName: asTrimmedString(input.recordingName) || "Manual Plaud import",
       source: "plaud-manual",
     });
+  }
+);
+
+function storedPlaudDocumentId(callId: string): string {
+  const trimmed = asTrimmedString(callId);
+  if (trimmed.startsWith("plaud-")) return trimmed.slice(0, 700);
+  return `plaud-${trimmed}`.slice(0, 700);
+}
+
+function plaudApiFileId(callId: string, storedCallId?: string): string {
+  if (asTrimmedString(storedCallId)) return asTrimmedString(storedCallId);
+  const trimmed = asTrimmedString(callId);
+  return trimmed.startsWith("plaud-") ? trimmed.slice("plaud-".length) : trimmed;
+}
+
+function serializePlaudCall(documentId: string, data: admin.firestore.DocumentData) {
+  return {
+    id: documentId,
+    callDate: asTrimmedString(data.callDate),
+    startedAt: asTrimmedString(data.startedAt),
+    recordingName: asTrimmedString(data.recordingName) || undefined,
+    durationMs: typeof data.durationMs === "number" ? data.durationMs : null,
+    serialNumber: asTrimmedString(data.serialNumber) || undefined,
+    callerPhone: asTrimmedString(data.callerPhone) || undefined,
+    transcript: asTrimmedString(data.transcript),
+    plaudSummary: asTrimmedString(data.plaudSummary) || undefined,
+    summary: asTrimmedString(data.summary),
+    customerServiceTips: Array.isArray(data.customerServiceTips)
+      ? data.customerServiceTips.map(asTrimmedString).filter(Boolean)
+      : [],
+    appointmentMade: data.appointmentMade === true,
+    workOrderId: asTrimmedString(data.workOrderId) || undefined,
+    appointmentEvidence: data.appointmentEvidence,
+    status: asTrimmedString(data.status) || "needs_review",
+    error: asTrimmedString(data.error) || undefined,
+    source: asTrimmedString(data.source) || undefined,
+  };
+}
+
+export const processPlaudCall = onCall(
+  { cors: true, timeoutSeconds: 180 },
+  async (request) => {
+    const input = request.data as { callId?: unknown; force?: unknown };
+    const requestedId = asTrimmedString(input.callId);
+    if (!requestedId) {
+      throw new HttpsError("invalid-argument", "A Plaud recording ID is required");
+    }
+    const force = input.force === true;
+    const documentId = storedPlaudDocumentId(requestedId);
+    const callRef = admin.firestore().collection(PLAUD_CALLS_COLLECTION).doc(documentId);
+    const existing = await callRef.get();
+    const previous = existing.data() || {};
+    const fileId = plaudApiFileId(requestedId, asTrimmedString(previous.callId));
+    const existingTranscript = asTrimmedString(previous.transcript);
+    const alreadyDone =
+      !force &&
+      existingTranscript.length >= 20 &&
+      (previous.status === "processed" || previous.status === "needs_review");
+
+    if (!alreadyDone) {
+      if (existingTranscript.length >= 20) {
+        await ingestPlaudCallRecord({
+          callId: fileId,
+          transcript: existingTranscript,
+          startedAt: asTrimmedString(previous.startedAt),
+          callerPhone: asTrimmedString(previous.callerPhone),
+          recordingName: asTrimmedString(previous.recordingName),
+          durationMs:
+            typeof previous.durationMs === "number" ? previous.durationMs : undefined,
+          serialNumber: asTrimmedString(previous.serialNumber),
+          plaudSummary: asTrimmedString(previous.plaudSummary),
+          source: asTrimmedString(previous.source) || "plaud",
+          force,
+        });
+      } else if (fileId.startsWith("manual-")) {
+        throw new HttpsError(
+          "failed-precondition",
+          "This manual import has no transcript to process."
+        );
+      } else {
+        await ingestPlaudFile({
+          id: fileId,
+          name: asTrimmedString(previous.recordingName) || undefined,
+          created_at: asTrimmedString(previous.startedAt) || undefined,
+          start_at: asTrimmedString(previous.startedAt) || undefined,
+          duration:
+            typeof previous.durationMs === "number" ? previous.durationMs : undefined,
+          serial_number: asTrimmedString(previous.serialNumber) || undefined,
+        });
+      }
+    }
+
+    const saved = await callRef.get();
+    if (!saved.exists) {
+      throw new HttpsError(
+        "not-found",
+        "Plaud recording was not saved after processing"
+      );
+    }
+    return serializePlaudCall(saved.id, saved.data() || {});
   }
 );
 

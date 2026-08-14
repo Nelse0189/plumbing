@@ -262,6 +262,140 @@
   color: #ffb4b4;
 }
 
+.call-intake__day-actions,
+.call-intake__call-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.call-intake__call-actions {
+  margin-left: auto;
+}
+
+.call-intake__call-actions button,
+.call-intake__day-actions button {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.78rem;
+}
+
+.call-intake button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.call-intake__modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.call-intake__modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.call-intake__modal-panel {
+  position: relative;
+  z-index: 1;
+  width: min(40rem, 100%);
+  max-height: min(86vh, 48rem);
+  overflow: auto;
+  padding: 1rem 1.1rem 1.2rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.call-intake__modal-panel--wide {
+  width: min(56rem, 100%);
+}
+
+.call-intake__modal-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+  margin-bottom: 0.9rem;
+}
+
+.call-intake__modal-header strong {
+  color: var(--accent);
+  font-size: 1rem;
+}
+
+.call-intake__modal-header p {
+  margin-top: 0.25rem;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.call-intake__facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.55rem 0.85rem;
+  margin: 0 0 0.85rem;
+}
+
+.call-intake__facts div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.call-intake__facts dt {
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.call-intake__facts dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.call-intake__summary-body,
+.call-intake__summary-list,
+.call-intake__job {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.call-intake__job {
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+}
+
+.call-intake__job header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.call-intake__job h3,
+.call-intake__summary-body h3 {
+  color: var(--accent);
+  font-size: 0.82rem;
+}
+
+.call-intake__job ul,
+.call-intake__summary-body ul {
+  margin: 0 0 0 1.1rem;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
 @media (max-width: 700px) {
   .call-intake__header,
   .call-intake__chat > div {

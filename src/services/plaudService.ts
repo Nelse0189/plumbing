@@ -39,6 +39,17 @@ export async function syncPlaudCalls(input: {
   return result.data;
 }
 
+export async function processPlaudCall(input: {
+  callId: string;
+  force?: boolean;
+}): Promise<PlaudCall> {
+  const call = httpsCallable<typeof input, PlaudCall>(functions, 'processPlaudCall', {
+    timeout: 3 * 60 * 1000,
+  });
+  const result = await call(input);
+  return result.data;
+}
+
 export async function importPlaudTranscript(input: {
   transcript: string;
   callerPhone?: string;

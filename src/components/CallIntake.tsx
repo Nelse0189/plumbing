@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { PlaudCall, PlaudConnection, PlaudSyncSummary } from '../types';
 import {
   askPlaudCalls,
@@ -6,8 +7,14 @@ import {
   getPlaudConnection,
   importPlaudTranscript,
   listPlaudCalls,
+  processPlaudCall,
   syncPlaudCalls,
 } from '../services/plaudService';
+import {
+  getDaySchedulingInfo,
+  type DaySchedulingInfo,
+  type DaySchedulingJob,
+} from '../services/dispatchService';
 import './CallIntake.css';
 
 function addDaysToIsoDate(isoDate: string, days: number): string {
@@ -53,6 +60,240 @@ function formatDuration(ms?: number | null): string {
   if (hours > 0) return `${hours}h ${String(minutes).padStart(2, '0')}m`;
   if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
   return `${seconds}s`;
+}
+
+function callNeedsProcessing(call: PlaudCall): boolean {
+  return (
+    call.status === 'in_plaud' ||
+    call.status === 'awaiting_transcript' ||
+    call.status === 'failed' ||
+    !call.summary
+  );
+}
+
+function dispatchLaneLabel(lane: DaySchedulingJob['dispatchLane']): string {
+  if (lane === 'truck') return 'On a truck';
+  if (lane === 'unassigned') return 'Ready / unassigned';
+  if (lane === 'not_ready') return 'Not ready';
+  return 'Not on dispatch board';
+}
+
+function Modal({
+  title,
+  subtitle,
+  onClose,
+  wide,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  onClose: () => void;
+  wide?: boolean;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="call-intake__modal" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="call-intake__modal-backdrop" onClick={onClose} />
+      <div
+        className={
+          wide
+            ? 'call-intake__modal-panel call-intake__modal-panel--wide'
+            : 'call-intake__modal-panel'
+        }
+      >
+        <header className="call-intake__modal-header">
+          <div>
+            <strong>{title}</strong>
+            {subtitle ? <p>{subtitle}</p> : null}
+          </div>
+          <button type="button" onClick={onClose}>
+            Close
+          </button>
+        </header>
+        {children}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function CallSummaryBody({ call }: { call: PlaudCall }) {
+  return (
+    <div className="call-intake__summary-body">
+      <dl className="call-intake__facts">
+        <div>
+          <dt>When</dt>
+          <dd>{call.startedAt ? new Date(call.startedAt).toLocaleString() : '—'}</dd>
+        </div>
+        <div>
+          <dt>Duration</dt>
+          <dd>{formatDuration(call.durationMs) || '—'}</dd>
+        </div>
+        <div>
+          <dt>Status</dt>
+          <dd className="call-intake__status">{call.status.replace('_', ' ')}</dd>
+        </div>
+        <div>
+          <dt>Appointment</dt>
+          <dd>{call.appointmentMade ? 'Yes' : 'No'}</dd>
+        </div>
+        <div>
+          <dt>Work order</dt>
+          <dd>{call.workOrderId || '—'}</dd>
+        </div>
+        <div>
+          <dt>Phone</dt>
+          <dd>{call.callerPhone || '—'}</dd>
+        </div>
+      </dl>
+      {call.error ? <p className="call-intake__error">{call.error}</p> : null}
+      <section>
+        <h3>Dispatcher summary</h3>
+        {call.summary ? (
+          <pre className="call-intake__transcript">{call.summary}</pre>
+        ) : (
+          <p className="call-intake__empty">No dispatcher summary yet. Process this call first.</p>
+        )}
+      </section>
+      {call.plaudSummary ? (
+        <section>
+          <h3>Plaud AI summary</h3>
+          <pre className="call-intake__transcript">{call.plaudSummary}</pre>
+        </section>
+      ) : null}
+      {call.customerServiceTips?.length > 0 ? (
+        <section>
+          <h3>Customer-service tips</h3>
+          <ul>
+            {call.customerServiceTips.map((tip, index) => (
+              <li key={index}>{tip}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {call.appointmentEvidence?.quote ? (
+        <section>
+          <h3>Appointment wording</h3>
+          <p>{call.appointmentEvidence.quote}</p>
+        </section>
+      ) : null}
+      {call.transcript ? (
+        <details>
+          <summary>Transcript</summary>
+          <TranscriptWithEvidence call={call} />
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function SchedulingJobCard({ job }: { job: DaySchedulingJob }) {
+  const order = job.workOrder;
+  return (
+    <article className="call-intake__job">
+      <header>
+        <strong>WO {order.workOrderNumber || '—'}</strong>
+        <span className="call-intake__status">{order.status.replace('_', ' ')}</span>
+      </header>
+      <dl className="call-intake__facts">
+        <div>
+          <dt>Customer</dt>
+          <dd>{order.customerName || '—'}</dd>
+        </div>
+        <div>
+          <dt>Phone</dt>
+          <dd>{order.phone || '—'}</dd>
+        </div>
+        <div>
+          <dt>Address</dt>
+          <dd>{order.address || '—'}</dd>
+        </div>
+        <div>
+          <dt>Job type</dt>
+          <dd>{order.jobType || '—'}</dd>
+        </div>
+        <div>
+          <dt>Appointment</dt>
+          <dd>
+            {order.appointmentDate || '—'}
+            {order.appointmentTime ? ` at ${order.appointmentTime}` : ''}
+          </dd>
+        </div>
+        <div>
+          <dt>Selected time</dt>
+          <dd>{order.selectedTime || 'Not chosen yet'}</dd>
+        </div>
+        <div>
+          <dt>SMS consent</dt>
+          <dd>{order.smsConsent ? 'Yes' : 'No'}</dd>
+        </div>
+        <div>
+          <dt>Source</dt>
+          <dd>{order.source || order.sourceFileName || '—'}</dd>
+        </div>
+        <div>
+          <dt>Dispatch</dt>
+          <dd>
+            {dispatchLaneLabel(job.dispatchLane)}
+            {job.truckName ? ` · ${job.truckName}` : ''}
+            {job.windowLabel ? ` · ${job.windowLabel}` : ''}
+          </dd>
+        </div>
+        <div>
+          <dt>Morning text</dt>
+          <dd>{job.morningTextStatus || 'none'}</dd>
+        </div>
+        <div>
+          <dt>Voice confirmation</dt>
+          <dd>
+            {job.voiceConfirmationResponse
+              ? job.voiceConfirmationResponse.replace('_', ' ')
+              : 'Not called'}
+            {job.voiceConfirmationDetails ? ` · ${job.voiceConfirmationDetails}` : ''}
+          </dd>
+        </div>
+        <div>
+          <dt>Schedule board</dt>
+          <dd>
+            {job.scheduleTruckName
+              ? `${job.scheduleTruckName}${job.scheduleTime ? ` at ${job.scheduleTime}` : ''}`
+              : 'Not on schedule'}
+          </dd>
+        </div>
+        <div>
+          <dt>SMS scheduling</dt>
+          <dd>
+            {job.schedulingStatus || 'No request'}
+            {job.availableTimeSlots?.length
+              ? ` · slots ${job.availableTimeSlots.join(', ')}`
+              : ''}
+          </dd>
+        </div>
+      </dl>
+      {order.callSummary ? (
+        <section>
+          <h3>Call summary</h3>
+          <pre className="call-intake__transcript">{order.callSummary}</pre>
+        </section>
+      ) : null}
+      <section>
+        <h3>Notes</h3>
+        {order.notes ? (
+          <pre className="call-intake__transcript">{order.notes}</pre>
+        ) : (
+          <p className="call-intake__empty">No notes on this work order.</p>
+        )}
+      </section>
+    </article>
+  );
 }
 
 function TranscriptWithEvidence({ call }: { call: PlaudCall }) {
@@ -101,6 +342,13 @@ export default function CallIntake({
   const [webToken, setWebToken] = useState('');
   const [webApiBase, setWebApiBase] = useState('https://api.plaud.ai');
   const [error, setError] = useState<string | null>(null);
+  const [processingCallId, setProcessingCallId] = useState<string | null>(null);
+  const [processingAll, setProcessingAll] = useState(false);
+  const [processProgress, setProcessProgress] = useState('');
+  const [summaryCall, setSummaryCall] = useState<PlaudCall | null>(null);
+  const [summaryCalls, setSummaryCalls] = useState<PlaudCall[] | null>(null);
+  const [dayJobs, setDayJobs] = useState<DaySchedulingInfo | null>(null);
+  const [loadingDayJobs, setLoadingDayJobs] = useState(false);
 
   const reload = async (scope: 'day' | 'all' = listScope) => {
     setLoading(true);
@@ -152,6 +400,83 @@ export default function CallIntake({
   const goToDate = (date: string) => {
     onSelectDate(date);
     setListScope('day');
+  };
+
+  const mergeProcessedCall = (processed: PlaudCall) => {
+    setCalls((current) => {
+      const index = current.findIndex((item) => item.id === processed.id);
+      if (index < 0) return [processed, ...current];
+      const next = [...current];
+      next[index] = { ...current[index], ...processed };
+      return next;
+    });
+    return processed;
+  };
+
+  const handleProcessCall = async (call: PlaudCall, openPopup = true) => {
+    setProcessingCallId(call.id);
+    setError(null);
+    try {
+      const processed = mergeProcessedCall(
+        await processPlaudCall({
+          callId: call.id,
+          force: call.status === 'failed',
+        })
+      );
+      if (openPopup) setSummaryCall(processed);
+      return processed;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return null;
+    } finally {
+      setProcessingCallId(null);
+    }
+  };
+
+  const handleShowSummary = async (call: PlaudCall) => {
+    if (callNeedsProcessing(call)) {
+      await handleProcessCall(call, true);
+      return;
+    }
+    setSummaryCall(call);
+  };
+
+  const handleProcessVisibleCalls = async () => {
+    const alreadySummarized = calls.filter(
+      (call) => !callNeedsProcessing(call) && Boolean(call.summary || call.plaudSummary)
+    );
+    const pending = calls.filter(callNeedsProcessing);
+    setProcessingAll(true);
+    setError(null);
+    const processed: PlaudCall[] = [];
+    try {
+      for (let index = 0; index < pending.length; index += 1) {
+        const call = pending[index];
+        setProcessProgress(`Processing ${index + 1} of ${pending.length}…`);
+        const result = await handleProcessCall(call, false);
+        if (result) processed.push(result);
+      }
+      setSummaryCalls([...alreadySummarized, ...processed]);
+    } finally {
+      setProcessingAll(false);
+      setProcessProgress('');
+    }
+  };
+
+  const handleShowDayWorkOrders = async () => {
+    setLoadingDayJobs(true);
+    setError(null);
+    try {
+      const extraIds = calls
+        .filter((call) => !call.callDate || call.callDate === selectedDate)
+        .map((call) => call.workOrderId)
+        .filter((id): id is string => Boolean(id));
+      setDayJobs(await getDaySchedulingInfo(selectedDate, extraIds));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingDayJobs(false);
+    }
   };
 
   return (
@@ -273,6 +598,27 @@ export default function CallIntake({
               {dayChipLabel(date, todayIso)}
             </button>
           ))}
+        </div>
+        <div className="call-intake__day-actions">
+          <button
+            type="button"
+            className="call-intake__primary"
+            disabled={processingAll || processingCallId !== null || calls.length === 0}
+            onClick={() => void handleProcessVisibleCalls()}
+          >
+            {processingAll
+              ? processProgress || 'Processing calls…'
+              : 'Process calls & show summaries'}
+          </button>
+          <button
+            type="button"
+            disabled={loadingDayJobs}
+            onClick={() => void handleShowDayWorkOrders()}
+          >
+            {loadingDayJobs
+              ? 'Loading work orders…'
+              : `Work orders for ${formatLongDate(selectedDate)}`}
+          </button>
         </div>
       </section>
 
@@ -471,6 +817,25 @@ console.log('click a Plaud recording now');`}</pre>
               <span className={`call-intake__status call-intake__status--${call.status}`}>
                 {call.status.replace('_', ' ')}
               </span>
+              <span className="call-intake__call-actions">
+                {callNeedsProcessing(call) ? (
+                  <button
+                    type="button"
+                    disabled={processingAll || processingCallId !== null}
+                    onClick={() => void handleProcessCall(call, true)}
+                  >
+                    {processingCallId === call.id ? 'Processing…' : 'Process'}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="call-intake__primary"
+                  disabled={processingAll || processingCallId !== null}
+                  onClick={() => void handleShowSummary(call)}
+                >
+                  {processingCallId === call.id ? 'Opening…' : 'Summary'}
+                </button>
+              </span>
             </header>
             {call.summary && <p>{call.summary}</p>}
             {!call.summary && call.plaudSummary && <p>{call.plaudSummary}</p>}
@@ -481,7 +846,7 @@ console.log('click a Plaud recording now');`}</pre>
             )}
             {call.status === 'in_plaud' && (
               <p className="call-intake__waiting">
-                This recording is in Plaud. Click Import all Plaud calls to pull the transcript and summary.
+                This recording is in Plaud. Click Process or Summary to pull the transcript and show the dispatcher summary.
               </p>
             )}
             {call.status === 'awaiting_transcript' && (
@@ -573,6 +938,76 @@ console.log('click a Plaud recording now');`}</pre>
           {submitting ? 'Processing transcript…' : 'Import transcript'}
         </button>
       </section>
+
+      {summaryCall ? (
+        <Modal
+          title={summaryCall.recordingName || 'Call summary'}
+          subtitle={
+            summaryCall.startedAt
+              ? new Date(summaryCall.startedAt).toLocaleString()
+              : undefined
+          }
+          onClose={() => setSummaryCall(null)}
+        >
+          <CallSummaryBody call={summaryCall} />
+        </Modal>
+      ) : null}
+
+      {summaryCalls ? (
+        <Modal
+          title="Call summaries"
+          subtitle={
+            listScope === 'all'
+              ? `${summaryCalls.length} processed recording${summaryCalls.length === 1 ? '' : 's'}`
+              : formatLongDate(selectedDate)
+          }
+          onClose={() => setSummaryCalls(null)}
+          wide
+        >
+          {summaryCalls.length === 0 ? (
+            <p className="call-intake__empty">
+              No summaries yet. Import or process recordings first.
+            </p>
+          ) : (
+            <div className="call-intake__summary-list">
+              {summaryCalls.map((call) => (
+                <article key={call.id} className="call-intake__job">
+                  <header>
+                    <strong>
+                      {call.recordingName || call.callerPhone || 'Untitled Plaud recording'}
+                    </strong>
+                    <span className={`call-intake__status call-intake__status--${call.status}`}>
+                      {call.status.replace('_', ' ')}
+                    </span>
+                  </header>
+                  <CallSummaryBody call={call} />
+                </article>
+              ))}
+            </div>
+          )}
+        </Modal>
+      ) : null}
+
+      {dayJobs ? (
+        <Modal
+          title={`Work orders · ${formatLongDate(dayJobs.date)}`}
+          subtitle={`${dayJobs.jobs.length} work order${dayJobs.jobs.length === 1 ? '' : 's'} · ${dayJobs.assignedCount} on trucks · ${dayJobs.unassignedCount} unassigned · ${dayJobs.notReadyCount} not ready`}
+          onClose={() => setDayJobs(null)}
+          wide
+        >
+          {dayJobs.jobs.length === 0 ? (
+            <p className="call-intake__empty">
+              No work orders are dated {formatLongDate(dayJobs.date)} yet. Process calls that booked appointments, or import work orders from Teams.
+            </p>
+          ) : (
+            <div className="call-intake__summary-list">
+              {dayJobs.jobs.map((job) => (
+                <SchedulingJobCard key={job.workOrder.id} job={job} />
+              ))}
+            </div>
+          )}
+        </Modal>
+      ) : null}
     </div>
   );
 }
