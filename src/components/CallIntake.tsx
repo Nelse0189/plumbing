@@ -89,22 +89,19 @@ function callNeedsProcessing(call: PlaudCall): boolean {
   );
 }
 
-function isStaleArrivalTimeReason(reason: string): boolean {
-  return /arrival time|callback window|clock time/i.test(reason);
+function isStaleReviewReason(reason: string): boolean {
+  return /arrival time|callback window|clock time|calendar date|YYYY-MM-DD|appointment date/i.test(
+    reason
+  );
 }
 
 function reviewReasonsForCall(call: PlaudCall): string[] {
-  const stored = (call.reviewReasons || []).filter((reason) => !isStaleArrivalTimeReason(reason));
+  const stored = (call.reviewReasons || []).filter((reason) => !isStaleReviewReason(reason));
   if (stored.length > 0) return stored;
   if (call.status !== 'needs_review') return [];
   const reasons: string[] = [];
   if (!call.appointmentMade) {
     reasons.push('The analyzer did not treat this as a fully confirmed appointment.');
-  }
-  if (!call.appointmentDate) {
-    reasons.push('No appointment date was saved. Dispatch needs a calendar date (YYYY-MM-DD).');
-  } else if (!/^\d{4}-\d{2}-\d{2}$/.test(call.appointmentDate)) {
-    reasons.push(`Appointment date "${call.appointmentDate}" is not a calendar date (YYYY-MM-DD).`);
   }
   const evidence = call.appointmentEvidence;
   if (evidence?.quote && !(evidence.end > evidence.start)) {
