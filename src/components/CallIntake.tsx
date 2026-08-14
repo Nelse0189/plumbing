@@ -184,7 +184,9 @@ function CallSummaryBody({ call }: { call: PlaudCall }) {
           <dd>{transcriptSourceLabel(call) || '—'}</dd>
         </div>
       </dl>
-      {call.error ? <p className="call-intake__error">{call.error}</p> : null}
+      {call.status === 'failed' && call.error ? (
+        <p className="call-intake__error">{call.error}</p>
+      ) : null}
       <section>
         <h3>Dispatcher summary</h3>
         {call.summary ? (
@@ -933,7 +935,9 @@ console.log('click a Plaud recording now');`}</pre>
                 This call was transcribed here without speaker names. Click Process to retry Plaud’s labeled transcript.
               </p>
             )}
-            {call.error && <p className="call-intake__error">{call.error}</p>}
+            {call.status === 'failed' && call.error && (
+              <p className="call-intake__error">{call.error}</p>
+            )}
             {call.customerServiceTips?.length > 0 && (
               <ul>
                 {call.customerServiceTips.map((tip, index) => (

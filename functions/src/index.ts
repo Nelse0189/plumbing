@@ -34,12 +34,67 @@ const strOpenAiModel = defineString("OPENAI_MODEL", {
   default: "gpt-4o-mini",
 });
 
+const OPENAI_CHAT_FALLBACK = "gpt-4o-mini";
+
 function openAiChatModel(): string {
-  const configured = asTrimmedString(strOpenAiModel.value()).replace(/\s+/g, "-");
-  if (/^(gpt-4o|gpt-4\.|gpt-4-|gpt-3\.5|o[1-4])/i.test(configured)) {
-    return configured;
+  const raw =
+    asTrimmedString(strOpenAiModel.value()) ||
+    asTrimmedString(process.env.OPENAI_MODEL) ||
+    OPENAI_CHAT_FALLBACK;
+  // OpenAI rejects IDs with spaces ("gpt-5.6 luna" → 400 invalid model ID).
+  const configured = raw.replace(/\s+/g, "-");
+  if (!configured || /[^a-zA-Z0-9._-]/.test(configured)) {
+    console.warn("Ignoring invalid OPENAI_MODEL; using fallback", {
+      raw: raw.slice(0, 80),
+      using: OPENAI_CHAT_FALLBACK,
+    });
+    return OPENAI_CHAT_FALLBACK;
   }
-  return "gpt-4o-mini";
+  return configured;
+}
+
+function isInvalidOpenAiModelError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /invalid model/i.test(message) || /model_not_found/i.test(message);
+}
+
+async function openAiChatCompletions(
+  params: Omit<OpenAI.Chat.ChatCompletionCreateParamsNonStreaming, "model"> & {
+    model?: string;
+  }
+): Promise<OpenAI.Chat.ChatCompletion> {
+  if (!strOpenAiApiKey.value()) {
+    throw new Error("OPENAI_API_KEY is not configured");
+  }
+  const client = new OpenAI({ apiKey: strOpenAiApiKey.value() });
+  const candidates = [
+    params.model || openAiChatModel(),
+    OPENAI_CHAT_FALLBACK,
+    "gpt-4.1-mini",
+  ];
+  const tried = new Set<string>();
+  let lastError: unknown;
+  for (const model of candidates) {
+    if (!model || tried.has(model)) continue;
+    tried.add(model);
+    try {
+      console.log("OpenAI chat model", { model });
+      return await client.chat.completions.create({
+        ...params,
+        model,
+      });
+    } catch (error) {
+      lastError = error;
+      if (!isInvalidOpenAiModelError(error)) throw error;
+      console.warn("OpenAI rejected model; retrying", {
+        model,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("OpenAI rejected every chat model ID");
 }
 
 const strTwilioAuthToken = defineString("TWILIO_AUTH_TOKEN", { default: "" });
@@ -218,10 +273,7 @@ async function extractBackgroundWorkOrder(
     throw new Error("PDF did not contain a safe amount of readable text");
   }
 
-  const result = await new OpenAI({
-    apiKey: strOpenAiApiKey.value(),
-  }).chat.completions.create({
-    model: openAiChatModel(),
+  const result = await openAiChatCompletions({
     messages: [
       { role: "system", content: workOrderExtractionInstructions },
       {
@@ -427,11 +479,8 @@ export const extractWorkOrder = onCall(
       );
     }
 
-    const openAi = new OpenAI({ apiKey: strOpenAiApiKey.value() });
-
     try {
-      const result = await openAi.chat.completions.create({
-        model: openAiChatModel(),
+      const result = await openAiChatCompletions({
         messages: [
           {
             role: "system",
@@ -673,11 +722,9 @@ export const importChannelPdfWorkOrder = onCall(
       );
     }
 
-    const openAi = new OpenAI({ apiKey: strOpenAiApiKey.value() });
     let extracted: WorkOrderRecord;
     try {
-      const result = await openAi.chat.completions.create({
-        model: openAiChatModel(),
+      const result = await openAiChatCompletions({
         messages: [
           {
             role: "system",
@@ -2165,10 +2212,7 @@ async function analyzeCallTranscript(
   if (!strOpenAiApiKey.value()) {
     throw new HttpsError("failed-precondition", "OPENAI_API_KEY is not configured");
   }
-  const response = await new OpenAI({
-    apiKey: strOpenAiApiKey.value(),
-  }).chat.completions.create({
-    model: openAiChatModel(),
+  const response = await openAiChatCompletions({
     messages: [
       {
         role: "system",
@@ -3384,8 +3428,7 @@ export const askPlaudCalls = onCall({ cors: true, timeoutSeconds: 120 }, async (
   if (!strOpenAiApiKey.value()) {
     throw new HttpsError("failed-precondition", "OPENAI_API_KEY is not configured");
   }
-  const response = await new OpenAI({ apiKey: strOpenAiApiKey.value() }).chat.completions.create({
-    model: openAiChatModel(),
+  const response = await openAiChatCompletions({
     messages: [
       {
         role: "system",
@@ -3651,10 +3694,7 @@ async function parseSchedulingReply(
     }
   }
 
-  const result = await new OpenAI({
-    apiKey: strOpenAiApiKey.value(),
-  }).chat.completions.create({
-    model: openAiChatModel(),
+  const result = await openAiChatCompletions({
     messages: [
       {
         role: "system",
