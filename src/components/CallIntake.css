@@ -201,6 +201,33 @@
   text-transform: capitalize;
 }
 
+.call-intake__job-source {
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.call-intake__job-source--home_depot {
+  color: #f0a202 !important;
+  border-color: #f0a202;
+}
+
+.call-intake__job-source--lowes {
+  color: #7aa2ff !important;
+  border-color: #7aa2ff;
+}
+
+.call-intake__job-source--n_and_j_in_house {
+  color: var(--accent) !important;
+  border-color: var(--accent);
+}
+
+.call-intake__job-source--not_tied_to_a_job {
+  color: var(--text-secondary) !important;
+}
+
 .call-intake__status--in_plaud {
   color: var(--accent) !important;
 }
@@ -378,9 +405,14 @@
 
 .call-intake__job header {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
+  justify-content: flex-start;
   gap: 0.5rem;
   align-items: center;
+}
+
+.call-intake__job header strong {
+  margin-right: auto;
 }
 
 .call-intake__job h3,

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { PlaudCall, PlaudConnection, PlaudSyncSummary } from '../types';
+import { jobSourceLabel } from '../utils/jobSource';
 import {
   askPlaudCalls,
   connectPlaudWebSession,
@@ -75,7 +76,18 @@ function callNeedsProcessing(call: PlaudCall): boolean {
     call.status === 'in_plaud' ||
     call.status === 'awaiting_transcript' ||
     call.status === 'failed' ||
-    !call.summary
+    !call.summary ||
+    !call.jobSource
+  );
+}
+
+function JobSourceBadge({ source }: { source?: string }) {
+  const label = jobSourceLabel(source);
+  if (!label) return null;
+  return (
+    <span className={`call-intake__job-source call-intake__job-source--${source}`}>
+      {label}
+    </span>
   );
 }
 
@@ -158,6 +170,13 @@ function CallSummaryBody({ call }: { call: PlaudCall }) {
           <dd>{call.workOrderId || '—'}</dd>
         </div>
         <div>
+          <dt>Job source</dt>
+          <dd>
+            <JobSourceBadge source={call.jobSource} />
+            {!call.jobSource ? '—' : null}
+          </dd>
+        </div>
+        <div>
           <dt>Phone</dt>
           <dd>{call.callerPhone || '—'}</dd>
         </div>
@@ -193,6 +212,12 @@ function CallSummaryBody({ call }: { call: PlaudCall }) {
           <p>{call.appointmentEvidence.quote}</p>
         </section>
       ) : null}
+      {call.jobSourceEvidenceQuote ? (
+        <section>
+          <h3>Job source wording</h3>
+          <p>{call.jobSourceEvidenceQuote}</p>
+        </section>
+      ) : null}
       {call.transcript ? (
         <details>
           <summary>Transcript</summary>
@@ -209,6 +234,7 @@ function SchedulingJobCard({ job }: { job: DaySchedulingJob }) {
     <article className="call-intake__job">
       <header>
         <strong>WO {order.workOrderNumber || '—'}</strong>
+        <JobSourceBadge source={order.jobSource} />
         <span className="call-intake__status">{order.status.replace('_', ' ')}</span>
       </header>
       <dl className="call-intake__facts">
@@ -227,6 +253,13 @@ function SchedulingJobCard({ job }: { job: DaySchedulingJob }) {
         <div>
           <dt>Job type</dt>
           <dd>{order.jobType || '—'}</dd>
+        </div>
+        <div>
+          <dt>Job source</dt>
+          <dd>
+            <JobSourceBadge source={order.jobSource} />
+            {!order.jobSource ? '—' : null}
+          </dd>
         </div>
         <div>
           <dt>Appointment</dt>
@@ -807,6 +840,7 @@ console.log('click a Plaud recording now');`}</pre>
               <span className={`call-intake__status call-intake__status--${call.status}`}>
                 {call.status.replace('_', ' ')}
               </span>
+              <JobSourceBadge source={call.jobSource} />
               <span className="call-intake__call-actions">
                 {callNeedsProcessing(call) ? (
                   <button
@@ -969,6 +1003,7 @@ console.log('click a Plaud recording now');`}</pre>
                     <span className={`call-intake__status call-intake__status--${call.status}`}>
                       {call.status.replace('_', ' ')}
                     </span>
+                    <JobSourceBadge source={call.jobSource} />
                   </header>
                   <CallSummaryBody call={call} />
                 </article>
