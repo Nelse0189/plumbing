@@ -255,11 +255,26 @@
   color: var(--bg-primary);
 }
 
-.call-intake__error {
-  padding: 0.75rem;
-  border: 1px solid var(--error);
-  background: rgba(202, 71, 84, 0.15);
-  color: #ffb4b4;
+.call-intake__review {
+  margin-top: 0.65rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: rgba(232, 176, 80, 0.12);
+}
+
+.call-intake__review h3,
+.call-intake__review strong {
+  color: var(--accent);
+  font-size: 0.82rem;
+}
+
+.call-intake__review ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.15rem;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.45;
 }
 
 .call-intake__day-actions,

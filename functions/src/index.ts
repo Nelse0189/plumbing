@@ -1250,12 +1250,91 @@ function callDateFromStartedAt(startedAt: string): string {
 }
 
 function transcriptEvidenceRange(transcript: string, quote: string) {
-  const start = quote ? transcript.toLowerCase().indexOf(quote.toLowerCase()) : -1;
+  const needle = asTrimmedString(quote);
+  if (!needle) {
+    return { quote: "", start: 0, end: 0 };
+  }
+  const haystack = transcript.toLowerCase();
+  let start = haystack.indexOf(needle.toLowerCase());
+  let matched = needle;
+  if (start < 0) {
+    const words = needle
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]+/g, " ")
+      .split(/\s+/)
+      .filter((word) => word.length > 2 && !/^(um|uh|the|and|you|will|be|for|our|let)$/i.test(word))
+      .slice(0, 8);
+    if (words.length >= 4) {
+      const pattern = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\W+");
+      const match = transcript.match(new RegExp(pattern, "i"));
+      if (match && typeof match.index === "number") {
+        start = match.index;
+        matched = match[0];
+      }
+    }
+  }
   return {
-    quote,
+    quote: matched,
     start: Math.max(0, start),
-    end: start >= 0 ? start + quote.length : 0,
+    end: start >= 0 ? start + matched.length : 0,
   };
+}
+
+function evidenceWasFound(evidence: { quote: string; start: number; end: number }): boolean {
+  return Boolean(asTrimmedString(evidence.quote) && evidence.end > evidence.start);
+}
+
+function collectPlaudReviewReasons(input: {
+  appointmentMade: boolean;
+  analyzerMarkedAppointment: boolean;
+  appointmentDate: string;
+  appointmentTime: string;
+  customerName: string;
+  phone: string;
+  address: string;
+  evidence: { quote: string; start: number; end: number };
+}): string[] {
+  const reasons: string[] = [];
+  const date = asTrimmedString(input.appointmentDate);
+  const time = asTrimmedString(input.appointmentTime);
+  if (!input.analyzerMarkedAppointment) {
+    reasons.push("The analyzer did not treat this as a fully confirmed appointment.");
+  }
+  if (!date) {
+    reasons.push("No appointment date was saved. Dispatch needs a calendar date (YYYY-MM-DD).");
+  } else if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    reasons.push(`Appointment date "${date}" is not a calendar date (YYYY-MM-DD).`);
+  }
+  if (!time) {
+    reasons.push(
+      "No specific arrival time was saved. A morning callback window (for example 8–9 AM) is not enough to put the job on a truck."
+    );
+  } else if (!/^\d{1,2}:\d{2}$/.test(time)) {
+    reasons.push(`Appointment time "${time}" is not a clock time (HH:MM).`);
+  }
+  if (!asTrimmedString(input.evidence.quote)) {
+    reasons.push("No exact wording from the call was saved that confirms the booking.");
+  } else if (!evidenceWasFound(input.evidence)) {
+    reasons.push(
+      "The booking quote was paraphrased and could not be matched in the transcript, so it was not treated as confirmed."
+    );
+  }
+  if (!asTrimmedString(input.phone)) {
+    reasons.push("Customer phone number is missing.");
+  }
+  if (!asTrimmedString(input.customerName)) {
+    reasons.push("Customer name is missing.");
+  }
+  if (!asTrimmedString(input.address) || asTrimmedString(input.address).split(/[,\d]/).filter(Boolean).length < 2) {
+    reasons.push("Service address is incomplete (city only or blank).");
+  }
+  if (input.appointmentMade && reasons.length === 0) {
+    reasons.push("The appointment looks booked, but the work order is not dispatch-ready.");
+  }
+  if (!input.appointmentMade && reasons.length === 0) {
+    reasons.push("A dispatcher needs to confirm the booking details.");
+  }
+  return [...new Set(reasons)];
 }
 
 function formatPlaudClock(ms: number): string {
@@ -2349,9 +2428,11 @@ async function ingestPlaudCallRecord(input: {
       transcript,
       asTrimmedString(analysis.appointmentEvidenceQuote)
     );
+    const extractedDate = asTrimmedString(analysis.appointmentDate);
+    const extractedTime = asTrimmedString(analysis.appointmentTime);
     const appointmentMade =
       analysis.appointmentMade === true &&
-      Boolean(analysis.appointmentDate && analysis.appointmentTime && evidence.quote);
+      Boolean(extractedDate && extractedTime && evidenceWasFound(evidence));
     const workOrderId = documentId;
     const workOrder: WorkOrderRecord = {
       workOrderNumber:
@@ -2362,8 +2443,8 @@ async function ingestPlaudCallRecord(input: {
       ),
       address: asTrimmedString(analysis.address),
       jobType: asTrimmedString(analysis.jobType) || "Water heater appointment",
-      appointmentDate: appointmentMade ? asTrimmedString(analysis.appointmentDate) : "",
-      appointmentTime: appointmentMade ? asTrimmedString(analysis.appointmentTime) : "",
+      appointmentDate: extractedDate,
+      appointmentTime: extractedTime,
       notes: [
         asTrimmedString(input.recordingName)
           ? `Plaud recording: ${asTrimmedString(input.recordingName)}`
@@ -2377,6 +2458,18 @@ async function ingestPlaudCallRecord(input: {
       confidence:
         typeof analysis.confidence === "number" ? analysis.confidence : undefined,
     };
+    const reviewReasons = appointmentMade && workOrderIsDispatchReady(workOrder)
+      ? []
+      : collectPlaudReviewReasons({
+          appointmentMade,
+          analyzerMarkedAppointment: analysis.appointmentMade === true,
+          appointmentDate: extractedDate,
+          appointmentTime: extractedTime,
+          customerName: workOrder.customerName,
+          phone: workOrder.phone,
+          address: workOrder.address,
+          evidence,
+        });
     const status =
       appointmentMade && workOrderIsDispatchReady(workOrder)
         ? "unscheduled"
@@ -2392,6 +2485,7 @@ async function ingestPlaudCallRecord(input: {
           ? analysis.customerServiceTips.map(asTrimmedString).filter(Boolean)
           : [],
         appointmentEvidence: evidence,
+        reviewReasons,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       },
@@ -2407,6 +2501,12 @@ async function ingestPlaudCallRecord(input: {
         appointmentMade,
         workOrderId,
         appointmentEvidence: evidence,
+        reviewReasons,
+        customerName: workOrder.customerName,
+        phone: workOrder.phone,
+        address: workOrder.address,
+        appointmentDate: extractedDate,
+        appointmentTime: extractedTime,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
@@ -3254,6 +3354,14 @@ function serializePlaudCall(documentId: string, data: admin.firestore.DocumentDa
     appointmentMade: data.appointmentMade === true,
     workOrderId: asTrimmedString(data.workOrderId) || undefined,
     appointmentEvidence: data.appointmentEvidence,
+    reviewReasons: Array.isArray(data.reviewReasons)
+      ? data.reviewReasons.map(asTrimmedString).filter(Boolean)
+      : [],
+    customerName: asTrimmedString(data.customerName) || undefined,
+    phone: asTrimmedString(data.phone) || undefined,
+    address: asTrimmedString(data.address) || undefined,
+    appointmentDate: asTrimmedString(data.appointmentDate) || undefined,
+    appointmentTime: asTrimmedString(data.appointmentTime) || undefined,
     status: asTrimmedString(data.status) || "needs_review",
     error: asTrimmedString(data.error) || undefined,
     source: asTrimmedString(data.source) || undefined,

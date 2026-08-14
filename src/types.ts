@@ -76,6 +76,12 @@ export interface PlaudCall {
   appointmentMade: boolean;
   workOrderId?: string;
   appointmentEvidence?: PlaudAppointmentEvidence;
+  reviewReasons?: string[];
+  customerName?: string;
+  phone?: string;
+  address?: string;
+  appointmentDate?: string;
+  appointmentTime?: string;
   status: 'processed' | 'needs_review' | 'failed' | 'awaiting_transcript' | 'processing' | 'in_plaud';
   error?: string;
   source?: string;

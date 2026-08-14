@@ -81,6 +81,56 @@ function callNeedsProcessing(call: PlaudCall): boolean {
   );
 }
 
+function reviewReasonsForCall(call: PlaudCall): string[] {
+  if (call.status !== 'needs_review') return [];
+  if (call.reviewReasons && call.reviewReasons.length > 0) return call.reviewReasons;
+  const reasons: string[] = [];
+  if (!call.appointmentMade) {
+    reasons.push('The analyzer did not treat this as a fully confirmed appointment.');
+  }
+  if (!call.appointmentDate) {
+    reasons.push('No appointment date was saved. Dispatch needs a calendar date (YYYY-MM-DD).');
+  }
+  if (!call.appointmentTime) {
+    reasons.push(
+      'No specific arrival time was saved. A morning callback window (for example 8–9 AM) is not enough to put the job on a truck.'
+    );
+  }
+  const evidence = call.appointmentEvidence;
+  if (evidence?.quote && !(evidence.end > evidence.start)) {
+    reasons.push(
+      'The booking quote was paraphrased and could not be matched in the transcript, so it was not treated as confirmed.'
+    );
+  } else if (!evidence?.quote) {
+    reasons.push('No exact wording from the call was saved that confirms the booking.');
+  }
+  if (!call.phone && !call.callerPhone) {
+    reasons.push('Customer phone number is missing.');
+  }
+  if (call.address && !/[0-9]/.test(call.address)) {
+    reasons.push('Service address is incomplete (city only or blank).');
+  }
+  if (reasons.length === 0) {
+    reasons.push('A dispatcher needs to confirm the booking details.');
+  }
+  return reasons;
+}
+
+function ReviewReasons({ call }: { call: PlaudCall }) {
+  const reasons = reviewReasonsForCall(call);
+  if (reasons.length === 0) return null;
+  return (
+    <section className="call-intake__review">
+      <h3>Why this needs review</h3>
+      <ul>
+        {reasons.map((reason) => (
+          <li key={reason}>{reason}</li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function transcriptSourceLabel(call: PlaudCall): string {
   if (call.source === 'plaud-whisper') {
     return 'Transcribed here without speaker names. Process again to retry Plaud’s labeled transcript.';
@@ -187,6 +237,7 @@ function CallSummaryBody({ call }: { call: PlaudCall }) {
       {call.status === 'failed' && call.error ? (
         <p className="call-intake__error">{call.error}</p>
       ) : null}
+      <ReviewReasons call={call} />
       <section>
         <h3>Dispatcher summary</h3>
         {call.summary ? (
@@ -918,6 +969,16 @@ console.log('click a Plaud recording now');`}</pre>
               <p className="call-intake__appointment">
                 Water-heater appointment detected · Work order: {call.workOrderId}
               </p>
+            )}
+            {call.status === 'needs_review' && (
+              <div className="call-intake__review">
+                <strong>Why this needs review</strong>
+                <ul>
+                  {reviewReasonsForCall(call).map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              </div>
             )}
             {call.status === 'in_plaud' && (
               <p className="call-intake__waiting">
