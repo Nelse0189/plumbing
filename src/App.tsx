@@ -147,7 +147,7 @@ function App() {
             onSelectDate={setSelectedDate}
           />
         ) : viewMode === 'calls' ? (
-          <CallIntake selectedDate={selectedDate} />
+          <CallIntake selectedDate={selectedDate} onSelectDate={setSelectedDate} />
         ) : loading ? (
           <div style={{
             padding: '2rem',

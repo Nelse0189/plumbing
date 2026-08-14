@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { PlaudCall, PlaudConnection, PlaudSyncSummary } from '../types';
 import {
   askPlaudCalls,
@@ -9,6 +9,40 @@ import {
   syncPlaudCalls,
 } from '../services/plaudService';
 import './CallIntake.css';
+
+function addDaysToIsoDate(isoDate: string, days: number): string {
+  const [year, month, day] = isoDate.split('-').map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day + days));
+  return next.toISOString().slice(0, 10);
+}
+
+function localTodayIso(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function dayChipLabel(isoDate: string, todayIso: string): string {
+  if (isoDate === todayIso) return 'Today';
+  if (isoDate === addDaysToIsoDate(todayIso, -1)) return 'Yesterday';
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  }).format(new Date(`${isoDate}T00:00:00Z`));
+}
+
+function formatLongDate(isoDate: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+  }).format(new Date(`${isoDate}T00:00:00Z`));
+}
 
 function formatDuration(ms?: number | null): string {
   if (!ms || ms <= 0) return '';
@@ -37,7 +71,13 @@ function TranscriptWithEvidence({ call }: { call: PlaudCall }) {
   );
 }
 
-export default function CallIntake({ selectedDate }: { selectedDate: string }) {
+export default function CallIntake({
+  selectedDate,
+  onSelectDate,
+}: {
+  selectedDate: string;
+  onSelectDate: (date: string) => void;
+}) {
   const [calls, setCalls] = useState<PlaudCall[]>([]);
   const [connection, setConnection] = useState<PlaudConnection | null>(null);
   const [syncSummary, setSyncSummary] = useState<PlaudSyncSummary | null>(null);
@@ -48,6 +88,11 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
   const [syncMode, setSyncMode] = useState<'day' | 'all' | null>(null);
   const syncing = syncMode !== null;
   const [listScope, setListScope] = useState<'day' | 'all'>('all');
+  const todayIso = localTodayIso();
+  const recentDays = useMemo(
+    () => Array.from({ length: 8 }, (_, index) => addDaysToIsoDate(todayIso, -index)),
+    [todayIso]
+  );
   const [submitting, setSubmitting] = useState(false);
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
@@ -104,15 +149,23 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
     };
   }, [selectedDate, listScope]);
 
+  const goToDate = (date: string) => {
+    onSelectDate(date);
+    setListScope('day');
+  };
+
   return (
     <div className="call-intake">
       <header className="call-intake__header">
         <div>
-          <h2>Plaud Call Intake · {listScope === 'all' ? 'all recordings' : selectedDate}</h2>
+          <h2>
+            Plaud Call Intake ·{' '}
+            {listScope === 'all' ? 'all recordings' : formatLongDate(selectedDate)}
+          </h2>
           <p>
-            Import every recording from your Plaud account, or just the selected
-            date. The list below shows recordings Plaud currently has
-            {' '}{listScope === 'all' ? '(all time)' : `on ${selectedDate}`}, including ones not imported yet.
+            Import every recording from your Plaud account, or jump to yesterday
+            and earlier days. The list below shows recordings Plaud currently has
+            {' '}{listScope === 'all' ? '(all time)' : `on ${formatLongDate(selectedDate)}`}, including ones not imported yet.
           </p>
           <p className={`call-intake__connection ${connection?.connected ? 'is-connected' : 'is-disconnected'}`}>
             {connection?.connected
@@ -174,6 +227,54 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
           </button>
         </div>
       </header>
+
+      <section className="call-intake__day-nav" aria-label="Call date">
+        <div className="call-intake__day-controls">
+          <button
+            type="button"
+            onClick={() => goToDate(addDaysToIsoDate(selectedDate, -1))}
+          >
+            ← Previous day
+          </button>
+          <input
+            type="date"
+            value={selectedDate}
+            max={todayIso}
+            onChange={(event) => goToDate(event.target.value)}
+            aria-label="Call date"
+          />
+          <button
+            type="button"
+            disabled={selectedDate >= todayIso}
+            onClick={() => goToDate(addDaysToIsoDate(selectedDate, 1))}
+          >
+            Next day →
+          </button>
+          <button
+            type="button"
+            className={selectedDate === todayIso && listScope === 'day' ? 'call-intake__primary' : undefined}
+            onClick={() => goToDate(todayIso)}
+          >
+            Today
+          </button>
+        </div>
+        <div className="call-intake__day-chips">
+          {recentDays.map((date) => (
+            <button
+              key={date}
+              type="button"
+              className={
+                date === selectedDate && listScope === 'day'
+                  ? 'call-intake__day-chip call-intake__day-chip--selected'
+                  : 'call-intake__day-chip'
+              }
+              onClick={() => goToDate(date)}
+            >
+              {dayChipLabel(date, todayIso)}
+            </button>
+          ))}
+        </div>
+      </section>
 
       {error && <div className="call-intake__error">{error}</div>}
 
@@ -308,7 +409,10 @@ console.log('click a Plaud recording now');`}</pre>
       )}
 
       <section className="call-intake__chat">
-        <h3>Ask AI about calls from this day</h3>
+        <h3>
+          Ask AI about calls from{' '}
+          {listScope === 'all' ? 'these recordings' : formatLongDate(selectedDate)}
+        </h3>
         <div>
           <input
             value={question}
@@ -339,7 +443,7 @@ console.log('click a Plaud recording now');`}</pre>
         <div className="call-intake__list-header">
           <h3>
             {calls.length} recording{calls.length === 1 ? '' : 's'}
-            {listScope === 'all' ? ' (all from Plaud)' : ` (${selectedDate})`}
+            {listScope === 'all' ? ' (all from Plaud)' : ` (${formatLongDate(selectedDate)})`}
           </h3>
           <div className="call-intake__actions">
             <button
@@ -415,7 +519,7 @@ console.log('click a Plaud recording now');`}</pre>
               ? 'Plaud returned 0 recordings for this login. Sign in at web.plaud.ai as the plumber whose Note has the calls, then paste that account’s Cookie line and connect again.'
               : listScope === 'all'
                 ? 'No Plaud recordings found yet. Connect the plumber’s Plaud account, then click Import all Plaud calls.'
-                : `No Plaud recordings found for ${selectedDate}. Switch to Show all recordings or click Import all Plaud calls.`}
+                : `No Plaud recordings found for ${formatLongDate(selectedDate)}. Use Previous day or a date chip, or switch to Show all recordings.`}
           </p>
         )}
       </section>
