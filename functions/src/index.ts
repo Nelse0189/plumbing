@@ -1,6 +1,6 @@
 import * as admin from "firebase-admin";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import twilio from "twilio";
 import { SpeechClient } from "@google-cloud/speech";
 import formidable from "formidable";
@@ -1685,7 +1685,14 @@ async function plaudRequest<T>(path: string, retry = true): Promise<T> {
 
 function plaudStatusOk(payload: Record<string, unknown>): boolean {
   const status = payload.status;
-  return status === undefined || status === 0 || status === "0" || status === "success";
+  return (
+    status === undefined ||
+    status === 0 ||
+    status === "0" ||
+    status === 200 ||
+    status === "200" ||
+    status === "success"
+  );
 }
 
 async function verifyPlaudWebToken(token: string, apiBase: string) {
@@ -2362,23 +2369,133 @@ async function fetchPlaudFileDetail(fileId: string): Promise<PlaudFileDetail> {
   };
 }
 
-async function ingestPlaudFile(file: PlaudFileSummary): Promise<PlaudSyncResult> {
+function firstPlaudUrl(...candidates: unknown[]): string {
+  for (const candidate of candidates) {
+    const value = asTrimmedString(candidate);
+    if (/^https?:\/\//i.test(value)) return value;
+  }
+  return "";
+}
+
+async function downloadUrlBytes(url: string): Promise<Buffer> {
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(120000),
+    headers: {
+      "User-Agent": PLAUD_WEB_USER_AGENT,
+      Accept: "*/*",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`Audio download failed (${response.status}) from ${new URL(url).host}`);
+  }
+  return Buffer.from(await response.arrayBuffer());
+}
+
+async function downloadPlaudAudio(
+  fileId: string,
+  detail: PlaudFileDetail
+): Promise<{ buffer: Buffer; filename: string }> {
+  const payload = await plaudRequest<unknown>(`/file/temp-url/${encodeURIComponent(fileId)}`).catch(
+    () => ({})
+  );
+  const record = asRecord(payload);
+  const data = asRecord(record.data);
+  const url = firstPlaudUrl(
+    detail.presigned_url,
+    record.temp_url,
+    record.temp_url_mp3,
+    record.temp_url_opus,
+    data.temp_url,
+    data.temp_url_mp3,
+    data.temp_url_opus,
+    record.url,
+    data.url
+  );
+  if (!url) {
+    throw new Error("Plaud did not return an audio download link for this recording");
+  }
+  const buffer = await downloadUrlBytes(url);
+  const host = new URL(url).host;
+  console.log("Plaud audio downloaded", { fileId, host, bytes: buffer.length });
+  const opus = /opus/i.test(url);
+  return {
+    buffer,
+    filename: `plaud-${fileId}.${opus ? "opus" : "mp3"}`,
+  };
+}
+
+async function transcribeAudioWithOpenAi(audio: Buffer, filename: string): Promise<string> {
+  if (!strOpenAiApiKey.value()) {
+    throw new Error("OPENAI_API_KEY is not configured");
+  }
+  if (audio.length < 1000) {
+    throw new Error("Downloaded Plaud audio was empty");
+  }
+  if (audio.length > 24 * 1024 * 1024) {
+    throw new Error(
+      `This recording is too large to transcribe here (${Math.round(audio.length / 1024 / 1024)} MB). OpenAI Whisper accepts up to 25 MB.`
+    );
+  }
+  const openai = new OpenAI({ apiKey: strOpenAiApiKey.value() });
+  const result = await openai.audio.transcriptions.create({
+    file: await toFile(audio, filename),
+    model: "whisper-1",
+    language: "en",
+    response_format: "text",
+  });
+  return asTrimmedString(typeof result === "string" ? result : (result as { text?: string }).text);
+}
+
+async function ingestPlaudFile(
+  file: PlaudFileSummary,
+  options: { transcribeIfMissing?: boolean } = {}
+): Promise<PlaudSyncResult> {
   const detail = await fetchPlaudFileDetail(file.id);
   const startedAt =
     asTrimmedString(detail.start_at) ||
     asTrimmedString(detail.created_at) ||
     asTrimmedString(file.start_at) ||
     asTrimmedString(file.created_at);
-  return ingestPlaudCallRecord({
+  let transcript = plaudTranscriptFromDetail(detail);
+  let plaudSummary = plaudSummaryFromDetail(detail);
+  let source = "plaud";
+  let awaitingReason = "";
+  if (transcript.length < 20 && options.transcribeIfMissing) {
+    try {
+      const audio = await downloadPlaudAudio(file.id, detail);
+      transcript = await transcribeAudioWithOpenAi(audio.buffer, audio.filename);
+      source = "plaud-whisper";
+      console.log("Plaud self-transcription complete", {
+        fileId: file.id,
+        transcriptChars: transcript.length,
+      });
+    } catch (error) {
+      awaitingReason = error instanceof Error ? error.message : String(error);
+      console.error("Plaud self-transcription failed", { fileId: file.id, awaitingReason });
+    }
+  }
+  const result = await ingestPlaudCallRecord({
     callId: detail.id || file.id,
-    transcript: plaudTranscriptFromDetail(detail),
+    transcript,
     startedAt,
     recordingName: asTrimmedString(detail.name) || asTrimmedString(file.name),
     durationMs: detail.duration ?? file.duration,
     serialNumber: asTrimmedString(detail.serial_number) || asTrimmedString(file.serial_number),
-    plaudSummary: plaudSummaryFromDetail(detail),
-    source: "plaud",
+    plaudSummary,
+    source,
   });
+  if (result.status === "awaiting_transcript" && awaitingReason) {
+    await admin.firestore().collection(PLAUD_CALLS_COLLECTION).doc(
+      `plaud-${detail.id || file.id}`.slice(0, 700)
+    ).set(
+      {
+        error: `Could not transcribe this recording: ${awaitingReason}`,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  }
+  return result;
 }
 
 function fileMatchesPlaudWindow(
@@ -2604,7 +2721,7 @@ function serializePlaudCall(documentId: string, data: admin.firestore.DocumentDa
 }
 
 export const processPlaudCall = onCall(
-  { cors: true, timeoutSeconds: 180, memory: "1GiB" },
+  { cors: true, timeoutSeconds: 540, memory: "1GiB" },
   async (request) => {
     const input = request.data as { callId?: unknown; force?: unknown };
     const requestedId = asTrimmedString(input.callId);
@@ -2652,7 +2769,7 @@ export const processPlaudCall = onCall(
           duration:
             typeof previous.durationMs === "number" ? previous.durationMs : undefined,
           serial_number: asTrimmedString(previous.serialNumber) || undefined,
-        });
+        }, { transcribeIfMissing: true });
       }
     }
 
