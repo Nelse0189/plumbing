@@ -75,6 +75,7 @@ export interface PlaudCall {
   customerServiceTips: string[];
   appointmentMade: boolean;
   workOrderId?: string;
+  workOrderNumber?: string;
   appointmentEvidence?: PlaudAppointmentEvidence;
   reviewReasons?: string[];
   customerName?: string;

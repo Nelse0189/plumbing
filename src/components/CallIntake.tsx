@@ -153,6 +153,40 @@ function textLooksUnscheduled(text: string): boolean {
   );
 }
 
+function extractWorkOrderNumberFromText(text: string): string {
+  const blob = text.trim();
+  if (!blob) return '';
+  const patterns = [
+    /\bwork[\s-]*order(?:\s*(?:number|no\.?|#))?\s*[:#-]?\s*([A-Za-z]{0,4}\d{4,12}(?:-\d{1,8})?)\b/gi,
+    /\b(?:wo|w\/o)\s*(?:number|no\.?|#|:)\s*[:#-]?\s*([A-Za-z]{0,4}\d{4,12})\b/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of blob.matchAll(pattern)) {
+      const candidate = (match[1] || '').trim();
+      if (
+        candidate &&
+        !/^plaud-/i.test(candidate) &&
+        /\d{4,}/.test(candidate) &&
+        !/^\d{4}-\d{2}-\d{2}$/.test(candidate) &&
+        !/^\d{1,2}[-/]\d{1,2}(?:[-/]\d{2,4})?$/.test(candidate)
+      ) {
+        return candidate;
+      }
+    }
+  }
+  return '';
+}
+
+function workOrderNumberForCall(call: PlaudCall): string {
+  const stored = (call.workOrderNumber || '').trim();
+  if (stored && !/^plaud-/i.test(stored) && /\d{4,}/.test(stored)) return stored;
+  return (
+    extractWorkOrderNumberFromText(call.plaudSummary || '') ||
+    extractWorkOrderNumberFromText(call.summary || '') ||
+    extractWorkOrderNumberFromText(call.recordingName || '')
+  );
+}
+
 function appointmentDateForCall(call: PlaudCall): string {
   const prose = [call.summary, call.plaudSummary, call.appointmentEvidence?.quote]
     .filter(Boolean)
@@ -374,7 +408,7 @@ function CallSummaryBody({ call }: { call: PlaudCall }) {
         </div>
         <div>
           <dt>Work order</dt>
-          <dd>{call.workOrderId || '—'}</dd>
+          <dd>{workOrderNumberForCall(call) || '—'}</dd>
         </div>
         <div>
           <dt>Phone</dt>
@@ -1183,12 +1217,14 @@ export default function CallIntake({
               <p className="call-intake__appointment-date">
                 Install date
                 <AppointmentDateBadge date={detectedDate} time={call.appointmentTime} />
-                {call.workOrderId ? <span>Work order: {call.workOrderId}</span> : null}
+                {workOrderNumberForCall(call) ? (
+                  <span>Work order: {workOrderNumberForCall(call)}</span>
+                ) : null}
               </p>
             ) : call.appointmentMade ? (
               <p className="call-intake__appointment">
                 Water-heater appointment detected
-                {call.workOrderId ? ` · Work order: ${call.workOrderId}` : ''}
+                {workOrderNumberForCall(call) ? ` · Work order: ${workOrderNumberForCall(call)}` : ''}
               </p>
             ) : null}
             {reviewReasonsForCall(call).length > 0 && (
