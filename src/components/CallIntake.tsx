@@ -76,25 +76,28 @@ function callNeedsProcessing(call: PlaudCall): boolean {
     call.status === 'in_plaud' ||
     call.status === 'awaiting_transcript' ||
     call.status === 'failed' ||
+    call.status === 'needs_review' ||
     call.source === 'plaud-whisper' ||
     !call.summary
   );
 }
 
+function isStaleArrivalTimeReason(reason: string): boolean {
+  return /arrival time|callback window|clock time/i.test(reason);
+}
+
 function reviewReasonsForCall(call: PlaudCall): string[] {
+  const stored = (call.reviewReasons || []).filter((reason) => !isStaleArrivalTimeReason(reason));
+  if (stored.length > 0) return stored;
   if (call.status !== 'needs_review') return [];
-  if (call.reviewReasons && call.reviewReasons.length > 0) return call.reviewReasons;
   const reasons: string[] = [];
   if (!call.appointmentMade) {
     reasons.push('The analyzer did not treat this as a fully confirmed appointment.');
   }
   if (!call.appointmentDate) {
     reasons.push('No appointment date was saved. Dispatch needs a calendar date (YYYY-MM-DD).');
-  }
-  if (!call.appointmentTime) {
-    reasons.push(
-      'No specific arrival time was saved. A morning callback window (for example 8–9 AM) is not enough to put the job on a truck.'
-    );
+  } else if (!/^\d{4}-\d{2}-\d{2}$/.test(call.appointmentDate)) {
+    reasons.push(`Appointment date "${call.appointmentDate}" is not a calendar date (YYYY-MM-DD).`);
   }
   const evidence = call.appointmentEvidence;
   if (evidence?.quote && !(evidence.end > evidence.start)) {
@@ -121,7 +124,7 @@ function ReviewReasons({ call }: { call: PlaudCall }) {
   if (reasons.length === 0) return null;
   return (
     <section className="call-intake__review">
-      <h3>Why this needs review</h3>
+      <h3>{call.status === 'needs_review' ? 'Why this needs review' : 'Work order needs review'}</h3>
       <ul>
         {reasons.map((reason) => (
           <li key={reason}>{reason}</li>
@@ -219,7 +222,12 @@ function CallSummaryBody({ call }: { call: PlaudCall }) {
         </div>
         <div>
           <dt>Appointment</dt>
-          <dd>{call.appointmentMade ? 'Yes' : 'No'}</dd>
+          <dd>
+            {call.appointmentMade ? 'Yes' : 'No'}
+            {call.appointmentDate
+              ? ` · ${call.appointmentDate}${call.appointmentTime ? ` at ${call.appointmentTime}` : ''}`
+              : ''}
+          </dd>
         </div>
         <div>
           <dt>Work order</dt>
@@ -487,7 +495,10 @@ export default function CallIntake({
       const processed = mergeProcessedCall(
         await processPlaudCall({
           callId: call.id,
-          force: call.status === 'failed' || call.source === 'plaud-whisper',
+          force:
+            call.status === 'failed' ||
+            call.status === 'needs_review' ||
+            call.source === 'plaud-whisper',
         })
       );
       if (openPopup) setSummaryCall(processed);
@@ -967,12 +978,17 @@ console.log('click a Plaud recording now');`}</pre>
             {!call.summary && call.plaudSummary && <p>{call.plaudSummary}</p>}
             {call.appointmentMade && (
               <p className="call-intake__appointment">
-                Water-heater appointment detected · Work order: {call.workOrderId}
+                Water-heater appointment detected
+                {call.appointmentDate ? ` · ${call.appointmentDate}` : ''}
+                {call.appointmentTime ? ` at ${call.appointmentTime}` : ''}
+                {call.workOrderId ? ` · Work order: ${call.workOrderId}` : ''}
               </p>
             )}
-            {call.status === 'needs_review' && (
+            {reviewReasonsForCall(call).length > 0 && (
               <div className="call-intake__review">
-                <strong>Why this needs review</strong>
+                <strong>
+                  {call.status === 'needs_review' ? 'Why this needs review' : 'Work order needs review'}
+                </strong>
                 <ul>
                   {reviewReasonsForCall(call).map((reason) => (
                     <li key={reason}>{reason}</li>
