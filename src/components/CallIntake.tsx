@@ -65,6 +65,100 @@ function formatDetectedDate(value?: string): string {
   return value;
 }
 
+const MONTH_INDEX: Record<string, number> = {
+  january: 1,
+  jan: 1,
+  february: 2,
+  feb: 2,
+  march: 3,
+  mar: 3,
+  april: 4,
+  apr: 4,
+  may: 5,
+  june: 6,
+  jun: 6,
+  july: 7,
+  jul: 7,
+  august: 8,
+  aug: 8,
+  september: 9,
+  sep: 9,
+  sept: 9,
+  october: 10,
+  oct: 10,
+  november: 11,
+  nov: 11,
+  december: 12,
+  dec: 12,
+};
+
+const DAY_WORDS: Record<string, number> = {
+  first: 1,
+  second: 2,
+  third: 3,
+  fourth: 4,
+  fifth: 5,
+  sixth: 6,
+  seventh: 7,
+  eighth: 8,
+  ninth: 9,
+  tenth: 10,
+  eleventh: 11,
+  twelfth: 12,
+  thirteenth: 13,
+  fourteenth: 14,
+  fifteenth: 15,
+  sixteenth: 16,
+  seventeenth: 17,
+  eighteenth: 18,
+  nineteenth: 19,
+  twentieth: 20,
+  thirtieth: 30,
+};
+
+function parseDayToken(raw: string): number {
+  const text = raw.toLowerCase().trim();
+  const digits = text.match(/^(\d{1,2})(?:st|nd|rd|th)?$/);
+  if (digits) return Number(digits[1]);
+  return DAY_WORDS[text] || 0;
+}
+
+function inferIsoDateFromText(text: string, startedAt?: string): string {
+  const blob = text.trim();
+  if (!blob) return '';
+  const iso = blob.match(/\d{4}-\d{2}-\d{2}/);
+  if (iso) return iso[0];
+  const callDate = startedAt
+    ? new Date(startedAt).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+    : '';
+  const year = Number((callDate || new Date().toISOString().slice(0, 10)).slice(0, 4));
+  const lower = blob.toLowerCase().replace(/[.,]/g, ' ');
+  const named = lower.match(
+    /\b(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sept|sep|october|oct|november|nov|december|dec)\s+(\d{1,2}(?:st|nd|rd|th)?|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth)(?:\s+(\d{4}))?/
+  );
+  if (named) {
+    const month = MONTH_INDEX[named[1]];
+    const day = parseDayToken(named[2]);
+    const useYear = named[3] ? Number(named[3]) : year;
+    if (month && day) {
+      return `${useYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+  }
+  return '';
+}
+
+function appointmentDateForCall(call: PlaudCall): string {
+  if (call.appointmentDate && /^\d{4}-\d{2}-\d{2}$/.test(call.appointmentDate)) {
+    return call.appointmentDate;
+  }
+  return inferIsoDateFromText(
+    [call.appointmentDate, call.summary, call.plaudSummary, call.appointmentEvidence?.quote]
+      .filter(Boolean)
+      .join('\n'),
+    call.startedAt
+  );
+}
+
 function AppointmentDateBadge({
   date,
   time,
@@ -257,10 +351,13 @@ function CallSummaryBody({ call }: { call: PlaudCall }) {
           <dt>Appointment</dt>
           <dd>
             {call.appointmentMade ? 'Yes' : 'No'}
-            {call.appointmentDate ? (
+            {appointmentDateForCall(call) ? (
               <>
                 {' '}
-                <AppointmentDateBadge date={call.appointmentDate} time={call.appointmentTime} />
+                <AppointmentDateBadge
+                  date={appointmentDateForCall(call)}
+                  time={call.appointmentTime}
+                />
               </>
             ) : null}
           </dd>
@@ -1029,16 +1126,18 @@ export default function CallIntake({
             </button>
           </div>
         </div>
-        {visibleCalls.map((call) => (
+        {visibleCalls.map((call) => {
+          const detectedDate = appointmentDateForCall(call);
+          return (
           <article
             key={call.id}
             className={
-              call.appointmentDate ? 'call-intake__call call-intake__call--dated' : 'call-intake__call'
+              detectedDate ? 'call-intake__call call-intake__call--dated' : 'call-intake__call'
             }
           >
             <header>
               <strong>{call.recordingName || call.callerPhone || 'Untitled Plaud recording'}</strong>
-              <AppointmentDateBadge date={call.appointmentDate} time={call.appointmentTime} />
+              <AppointmentDateBadge date={detectedDate} time={call.appointmentTime} />
               <span>{call.startedAt ? new Date(call.startedAt).toLocaleString() : ''}</span>
               {formatDuration(call.durationMs) && <span>{formatDuration(call.durationMs)}</span>}
               <span className={`call-intake__status call-intake__status--${call.status}`}>
@@ -1070,10 +1169,10 @@ export default function CallIntake({
             </header>
             {call.summary && <p>{call.summary}</p>}
             {!call.summary && call.plaudSummary && <p>{call.plaudSummary}</p>}
-            {call.appointmentDate ? (
+            {detectedDate ? (
               <p className="call-intake__appointment-date">
                 Install date
-                <AppointmentDateBadge date={call.appointmentDate} time={call.appointmentTime} />
+                <AppointmentDateBadge date={detectedDate} time={call.appointmentTime} />
                 {call.workOrderId ? <span>Work order: {call.workOrderId}</span> : null}
               </p>
             ) : call.appointmentMade ? (
@@ -1141,7 +1240,8 @@ export default function CallIntake({
               </details>
             )}
           </article>
-        ))}
+          );
+        })}
         {!loading && visibleCalls.length === 0 && (
           <p className="call-intake__empty">
             {typeof connection?.libraryCount === 'number' && connection.libraryCount === 0
