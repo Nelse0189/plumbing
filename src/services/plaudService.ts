@@ -55,9 +55,15 @@ export async function importPlaudTranscript(input: {
   return result.data;
 }
 
-export async function listPlaudCalls(date: string): Promise<PlaudCall[]> {
-  const call = httpsCallable<{ date: string }, PlaudCall[]>(functions, 'listPlaudCalls');
-  const result = await call({ date });
+export async function listPlaudCalls(input: {
+  date?: string;
+  allTime?: boolean;
+}): Promise<PlaudCall[]> {
+  const call = httpsCallable<{ date?: string; allTime?: boolean }, PlaudCall[]>(
+    functions,
+    'listPlaudCalls'
+  );
+  const result = await call(input);
   return result.data;
 }
 

@@ -1415,10 +1415,13 @@ const PLAUD_WEB_USER_AGENT =
 function plaudConsumerHeaders(token: string, scheme = "Bearer"): Record<string, string> {
   return {
     Authorization: `${scheme} ${token}`,
-    Accept: "application/json",
+    Accept: "application/json, text/plain, */*",
     "Content-Type": "application/json",
     "User-Agent": PLAUD_WEB_USER_AGENT,
     "app-platform": "web",
+    "edit-from": "web",
+    Origin: "https://web.plaud.ai",
+    Referer: "https://web.plaud.ai/",
   };
 }
 
@@ -1561,26 +1564,43 @@ async function verifyPlaudWebToken(token: string, apiBase: string) {
   );
 }
 
+function firstPlaudArray(...candidates: unknown[]): unknown[] {
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate;
+  }
+  return [];
+}
+
+function plaudLibraryTotal(payload: unknown): number | undefined {
+  const record = asRecord(payload);
+  const data = asRecord(record.data);
+  const total = Number(
+    record.data_file_total ??
+      data.data_file_total ??
+      record.total ??
+      data.total ??
+      record.count ??
+      data.count
+  );
+  return Number.isFinite(total) && total >= 0 ? total : undefined;
+}
+
 function plaudFilesFromPage(payload: unknown): PlaudFileSummary[] {
   const record = asRecord(payload);
   const data = asRecord(record.data);
-  const raw = Array.isArray(payload)
-    ? payload
-    : Array.isArray(record.data)
-      ? record.data
-      : Array.isArray(record.files)
-        ? record.files
-        : Array.isArray(record.items)
-          ? record.items
-          : Array.isArray(data.files)
-            ? (data.files as unknown[])
-            : Array.isArray(data.data_file_list)
-              ? (data.data_file_list as unknown[])
-              : Array.isArray(data.file_list)
-                ? (data.file_list as unknown[])
-                : Array.isArray(data.list)
-                  ? (data.list as unknown[])
-                  : [];
+  const raw = firstPlaudArray(
+    payload,
+    record.data_file_list,
+    record.file_list,
+    record.files,
+    record.items,
+    record.list,
+    record.data,
+    data.data_file_list,
+    data.file_list,
+    data.files,
+    data.list
+  );
   return raw
     .map((item) => {
       const file = asRecord(item);
@@ -1635,29 +1655,39 @@ async function alreadyIngestedPlaudCall(fileId: string): Promise<PlaudSyncResult
   return null;
 }
 
-async function listPlaudFiles(maxPages = 6, pageSize = 50): Promise<PlaudFileSummary[]> {
+const PLAUD_WEB_LIST_QUERY = "is_trash=0&sort_by=start_time&is_desc=true";
+
+async function listPlaudFiles(
+  maxPages = 6,
+  pageSize = 100
+): Promise<{ files: PlaudFileSummary[]; total?: number }> {
   const session = await getPlaudSession();
   const files: PlaudFileSummary[] = [];
+  let total: number | undefined;
   if (session.mode === "consumer") {
     for (let page = 0; page < maxPages; page += 1) {
       const payload = await plaudRequest<unknown>(
-        `/file/simple/web?skip=${page * pageSize}&limit=${pageSize}`
+        `/file/simple/web?skip=${page * pageSize}&limit=${pageSize}&${PLAUD_WEB_LIST_QUERY}`
       );
+      if (total === undefined) total = plaudLibraryTotal(payload);
       const batch = plaudFilesFromPage(payload);
       files.push(...batch);
-      if (batch.length < pageSize) break;
+      if (batch.length === 0 || batch.length < pageSize) break;
+      if (total !== undefined && files.length >= total) break;
     }
-    return files;
+    return { files, total: total ?? files.length };
   }
   for (let page = 1; page <= maxPages; page += 1) {
     const payload = await plaudRequest<unknown>(
       `/open/third-party/files/?page=${page}&page_size=${pageSize}`
     );
+    if (total === undefined) total = plaudLibraryTotal(payload);
     const batch = plaudFilesFromPage(payload);
     files.push(...batch);
-    if (batch.length < pageSize) break;
+    if (batch.length === 0 || batch.length < pageSize) break;
+    if (total !== undefined && files.length >= total) break;
   }
-  return files;
+  return { files, total: total ?? files.length };
 }
 
 function unwrapPlaudFile(payload: unknown): PlaudFileDetail {
@@ -2046,7 +2076,8 @@ async function syncPlaudRecordings(options: {
   days?: number;
   allTime?: boolean;
 }) {
-  const files = await listPlaudFiles(options.allTime ? 100 : 6);
+  const listed = await listPlaudFiles(options.allTime ? 200 : 6);
+  const files = listed.files;
   const matched = files.filter((file) => fileMatchesPlaudWindow(file, options));
   const results: PlaudSyncResult[] = [];
   for (const file of matched) {
@@ -2074,6 +2105,7 @@ async function syncPlaudRecordings(options: {
     awaitingTranscript: results.filter((item) => item.status === "awaiting_transcript").length,
     appointments: results.filter((item) => item.appointmentMade).length,
     scope: options.allTime ? "all-time" : options.date || `${options.days ?? 2}-days`,
+    plaudTotal: listed.total,
     results,
   };
 }
@@ -2083,13 +2115,14 @@ export const getPlaudConnection = onCall({ cors: true }, async () => {
     const session = await getPlaudSession();
     if (session.mode === "consumer") {
       const payload = asRecord(
-        await plaudRequest<unknown>("/file/simple/web?skip=0&limit=1")
+        await plaudRequest<unknown>(`/file/simple/web?skip=0&limit=1&${PLAUD_WEB_LIST_QUERY}`)
       );
       const files = plaudFilesFromPage(payload);
       return {
         connected: true,
         mode: "web",
-        name: files[0]?.name ? "Plaud web account" : "Plaud web account",
+        name: "Plaud web account",
+        libraryCount: plaudLibraryTotal(payload) ?? files.length,
       };
     }
     const payload = asRecord(await plaudRequest<unknown>("/open/third-party/users/current"));
@@ -2202,13 +2235,16 @@ export const importPlaudTranscript = onCall(
 );
 
 export const listPlaudCalls = onCall({ cors: true }, async (request) => {
-  const date = asTrimmedString((request.data as { date?: unknown }).date);
-  const snapshot = await admin
-    .firestore()
-    .collection(PLAUD_CALLS_COLLECTION)
-    .where("callDate", "==", date)
-    .limit(100)
-    .get();
+  const input = request.data as { date?: unknown; allTime?: unknown };
+  const allTime = input.allTime === true;
+  const date = asTrimmedString(input.date);
+  if (!allTime && !date) {
+    throw new HttpsError("invalid-argument", "Provide a date or allTime");
+  }
+  const callsRef = admin.firestore().collection(PLAUD_CALLS_COLLECTION);
+  const snapshot = allTime
+    ? await callsRef.limit(1000).get()
+    : await callsRef.where("callDate", "==", date).limit(100).get();
   return snapshot.docs
     .map((document) => ({ id: document.id, ...document.data() }))
     .sort((left, right) =>

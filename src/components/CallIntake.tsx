@@ -47,6 +47,7 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
   const [loading, setLoading] = useState(true);
   const [syncMode, setSyncMode] = useState<'day' | 'all' | null>(null);
   const syncing = syncMode !== null;
+  const [listScope, setListScope] = useState<'day' | 'all'>('all');
   const [submitting, setSubmitting] = useState(false);
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
@@ -56,12 +57,14 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
   const [webApiBase, setWebApiBase] = useState('https://api.plaud.ai');
   const [error, setError] = useState<string | null>(null);
 
-  const reload = async () => {
+  const reload = async (scope: 'day' | 'all' = listScope) => {
     setLoading(true);
     setError(null);
     try {
       const [nextCalls, nextConnection] = await Promise.all([
-        listPlaudCalls(selectedDate),
+        listPlaudCalls(
+          scope === 'all' ? { allTime: true } : { date: selectedDate }
+        ),
         getPlaudConnection(),
       ]);
       setCalls(nextCalls);
@@ -74,56 +77,58 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
   };
 
   useEffect(() => {
+    let cancelled = false;
     setAnswer('');
-    setSyncSummary(null);
-    void reload();
-  }, [selectedDate]);
+    setLoading(true);
+    setError(null);
+    void Promise.all([
+      listPlaudCalls(
+        listScope === 'all' ? { allTime: true } : { date: selectedDate }
+      ),
+      getPlaudConnection(),
+    ])
+      .then(([nextCalls, nextConnection]) => {
+        if (cancelled) return;
+        setCalls(nextCalls);
+        setConnection(nextConnection);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedDate, listScope]);
 
   return (
     <div className="call-intake">
       <header className="call-intake__header">
         <div>
-          <h2>Plaud Call Intake · {selectedDate}</h2>
+          <h2>Plaud Call Intake · {listScope === 'all' ? 'all recordings' : selectedDate}</h2>
           <p>
-            Recordings sync from your Plaud Note through the same API as
-            {' '}<code>plaud files</code> and <code>plaud transcript</code>.
-            <strong> Sync this day</strong> imports only the selected date.
-            <strong> Sync all time</strong> imports every recording; already
-            saved calls are skipped. This list still shows the selected day.
+            Import every recording from your Plaud account, or just the selected
+            date. Already saved calls are skipped. The list below shows
+            {' '}{listScope === 'all' ? 'every imported call' : `calls saved for ${selectedDate}`}.
           </p>
           <p className={`call-intake__connection ${connection?.connected ? 'is-connected' : 'is-disconnected'}`}>
             {connection?.connected
-              ? `Connected to Plaud${connection.mode === 'web' ? ' via web.plaud.ai' : ''}${connection.name || connection.email ? ` · ${connection.name || connection.email}` : ''}`
+              ? `Connected to Plaud${connection.mode === 'web' ? ' via web.plaud.ai' : ''}${connection.name || connection.email ? ` · ${connection.name || connection.email}` : ''}${typeof connection.libraryCount === 'number' ? ` · ${connection.libraryCount} in Plaud` : ''}`
               : 'Plaud CLI login is currently blocked by a broken Plaud “bind device” page. Connect with a web.plaud.ai session token below.'}
           </p>
         </div>
         <div className="call-intake__actions">
           <button
             type="button"
-            disabled={syncing || !connection?.connected}
-            onClick={async () => {
-              setSyncMode('day');
-              setError(null);
-              try {
-                const summary = await syncPlaudCalls({ date: selectedDate });
-                setSyncSummary(summary);
-                await reload();
-              } catch (err) {
-                setError(err instanceof Error ? err.message : String(err));
-              } finally {
-                setSyncMode(null);
-              }
-            }}
-          >
-            {syncMode === 'day' ? 'Syncing this day…' : 'Sync this day'}
-          </button>
-          <button
-            type="button"
+            className="call-intake__primary"
             disabled={syncing || !connection?.connected}
             onClick={async () => {
               if (
                 !window.confirm(
-                  'Sync every Plaud recording, not just this day? Already saved calls are skipped. This can take several minutes.'
+                  'Import every recording available on Plaud, not just this day? Already saved calls are skipped. The first run can take several minutes.'
                 )
               ) {
                 return;
@@ -133,7 +138,8 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
               try {
                 const summary = await syncPlaudCalls({ allTime: true });
                 setSyncSummary(summary);
-                await reload();
+                setListScope('all');
+                await reload('all');
               } catch (err) {
                 setError(err instanceof Error ? err.message : String(err));
               } finally {
@@ -141,7 +147,27 @@ export default function CallIntake({ selectedDate }: { selectedDate: string }) {
               }
             }}
           >
-            {syncMode === 'all' ? 'Syncing all time…' : 'Sync all time'}
+            {syncMode === 'all' ? 'Importing all Plaud calls…' : 'Import all Plaud calls'}
+          </button>
+          <button
+            type="button"
+            disabled={syncing || !connection?.connected}
+            onClick={async () => {
+              setSyncMode('day');
+              setError(null);
+              try {
+                const summary = await syncPlaudCalls({ date: selectedDate });
+                setSyncSummary(summary);
+                setListScope('day');
+                await reload('day');
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setSyncMode(null);
+              }
+            }}
+          >
+            {syncMode === 'day' ? 'Syncing this day…' : 'Sync this day'}
           </button>
           <button type="button" disabled={loading} onClick={() => void reload()}>
             {loading ? 'Loading…' : 'Refresh calls'}
@@ -271,15 +297,13 @@ console.log('click a Plaud recording now');`}</pre>
       {syncSummary && (
         <p className="call-intake__sync">
           {syncSummary.scope === 'all-time'
-            ? 'Synced all Plaud recordings'
+            ? 'Imported all Plaud recordings'
             : `Synced ${syncSummary.scope || selectedDate}`}
+          {typeof syncSummary.plaudTotal === 'number' ? ` · Plaud library ${syncSummary.plaudTotal}` : ''}
           {' '}· {syncSummary.matched} of {syncSummary.scanned} files ·
           {' '}{syncSummary.imported} imported · {syncSummary.skipped} already saved ·
           {' '}{syncSummary.awaitingTranscript} waiting on transcripts ·
           {' '}{syncSummary.appointments} appointments · {syncSummary.failed} failed.
-          {syncSummary.scope === 'all-time'
-            ? ' This list still shows the selected day — change the date to see older calls.'
-            : ''}
         </p>
       )}
 
@@ -312,7 +336,28 @@ console.log('click a Plaud recording now');`}</pre>
       </section>
 
       <section className="call-intake__calls">
-        <h3>{calls.length} recordings</h3>
+        <div className="call-intake__list-header">
+          <h3>
+            {calls.length} recording{calls.length === 1 ? '' : 's'}
+            {listScope === 'all' ? ' (all imported)' : ` (${selectedDate})`}
+          </h3>
+          <div className="call-intake__actions">
+            <button
+              type="button"
+              className={listScope === 'all' ? 'call-intake__primary' : undefined}
+              onClick={() => setListScope('all')}
+            >
+              Show all imported
+            </button>
+            <button
+              type="button"
+              className={listScope === 'day' ? 'call-intake__primary' : undefined}
+              onClick={() => setListScope('day')}
+            >
+              Show this day
+            </button>
+          </div>
+        </div>
         {calls.map((call) => (
           <article key={call.id} className="call-intake__call">
             <header>
@@ -361,8 +406,9 @@ console.log('click a Plaud recording now');`}</pre>
         ))}
         {!loading && calls.length === 0 && (
           <p className="call-intake__empty">
-            No Plaud recordings saved for this day. Record on a Plaud Note, wait for it to sync
-            to Plaud, then click Sync Plaud recordings.
+            {listScope === 'all'
+              ? 'No Plaud recordings have been imported yet. Click Import all Plaud calls to pull every recording from your account.'
+              : `No Plaud recordings saved for ${selectedDate}. Click Import all Plaud calls to pull every recording, or Sync this day for this date only.`}
           </p>
         )}
       </section>

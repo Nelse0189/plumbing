@@ -85,6 +85,7 @@ export interface PlaudConnection {
   email?: string;
   name?: string;
   error?: string;
+  libraryCount?: number;
 }
 
 export interface PlaudSyncSummary {
@@ -96,6 +97,7 @@ export interface PlaudSyncSummary {
   awaitingTranscript: number;
   appointments: number;
   scope?: string;
+  plaudTotal?: number;
 }
 
 /** 4-hour arrival window shown to the customer (HH:MM, 24h). */
