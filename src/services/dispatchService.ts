@@ -86,6 +86,8 @@ export async function listWorkOrdersForDate(date: string): Promise<StoredWorkOrd
       selectedTime?: string;
       callSummary?: string;
       source?: string;
+      jobSource?: string;
+      jobSourceEvidenceQuote?: string;
     };
     return {
       id: document.id,
@@ -100,6 +102,8 @@ export async function listWorkOrdersForDate(date: string): Promise<StoredWorkOrd
       sourceFileName: data.sourceFileName || '',
       smsConsent: data.smsConsent === true,
       confidence: data.confidence,
+      jobSource: data.jobSource || '',
+      jobSourceEvidenceQuote: data.jobSourceEvidenceQuote || '',
       status: (data.status as StoredWorkOrder['status']) || 'unscheduled',
       selectedTime: data.selectedTime,
       callSummary: data.callSummary || '',

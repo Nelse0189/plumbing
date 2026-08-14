@@ -40,6 +40,8 @@ export interface WorkOrder {
   sourceFileName: string;
   smsConsent: boolean;
   confidence?: number;
+  jobSource?: string;
+  jobSourceEvidenceQuote?: string;
   teamsTeamId?: string;
   teamsChannelId?: string;
   teamsMessageId?: string;
@@ -76,6 +78,8 @@ export interface PlaudCall {
   appointmentMade: boolean;
   workOrderId?: string;
   appointmentEvidence?: PlaudAppointmentEvidence;
+  jobSource?: string;
+  jobSourceEvidenceQuote?: string;
   status: 'processed' | 'needs_review' | 'failed' | 'awaiting_transcript' | 'processing' | 'in_plaud';
   error?: string;
   source?: string;
