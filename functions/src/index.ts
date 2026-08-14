@@ -29,7 +29,6 @@ admin.initializeApp();
  * Optional later: move sensitive keys to `defineSecret` + `firebase functions:secrets:set`
  * for Secret Manager instead of plain env vars on Cloud Run.
  */
-const strGeminiApiKey = defineString("GEMINI_API_KEY", { default: "" });
 const strOpenAiApiKey = defineString("OPENAI_API_KEY", { default: "" });
 const strOpenAiModel = defineString("OPENAI_MODEL", {
   default: "gpt-5.6-luna",
@@ -4122,7 +4121,7 @@ export const processVoiceEmail = onRequest(
   },
   async (req, res) => {
   try {
-    const geminiApiKey = strGeminiApiKey.value();
+    const geminiApiKey = process.env.GEMINI_API_KEY || "";
 
     // Set CORS headers
     res.set("Access-Control-Allow-Origin", "*");
@@ -4734,7 +4733,7 @@ async function checkGmailForVoiceEmailsInternal(ctx: GmailPollContext) {
 
 function buildGmailPollContext(): GmailPollContext {
   return {
-    geminiApiKey: strGeminiApiKey.value(),
+    geminiApiKey: process.env.GEMINI_API_KEY || "",
     gmailEmail: strGmailEmail.value(),
     gmailClientId: strGmailClientId.value(),
     gmailClientSecret: strGmailClientSecret.value(),
