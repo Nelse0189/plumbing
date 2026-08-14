@@ -225,6 +225,41 @@
   color: var(--text-secondary);
 }
 
+.call-intake__call--dated {
+  border-color: var(--accent);
+  box-shadow: inset 4px 0 0 var(--accent);
+}
+
+.call-intake__date-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.22rem 0.7rem;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--bg-primary) !important;
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+}
+
+.call-intake__appointment-date {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.call-intake__appointment-date span:not(.call-intake__date-badge) {
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
 .call-intake__status {
   padding: 0.15rem 0.35rem;
   border: 1px solid var(--border);

@@ -59,6 +59,28 @@ function formatLongDate(isoDate: string): string {
   }).format(new Date(`${isoDate}T00:00:00Z`));
 }
 
+function formatDetectedDate(value?: string): string {
+  if (!value) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return formatLongDate(value);
+  return value;
+}
+
+function AppointmentDateBadge({
+  date,
+  time,
+}: {
+  date?: string;
+  time?: string;
+}) {
+  if (!date) return null;
+  return (
+    <span className="call-intake__date-badge">
+      {formatDetectedDate(date)}
+      {time ? ` · ${time}` : ''}
+    </span>
+  );
+}
+
 function formatDuration(ms?: number | null): string {
   if (!ms || ms <= 0) return '';
   const total = Math.floor(ms / 1000);
@@ -235,9 +257,12 @@ function CallSummaryBody({ call }: { call: PlaudCall }) {
           <dt>Appointment</dt>
           <dd>
             {call.appointmentMade ? 'Yes' : 'No'}
-            {call.appointmentDate
-              ? ` · ${call.appointmentDate}${call.appointmentTime ? ` at ${call.appointmentTime}` : ''}`
-              : ''}
+            {call.appointmentDate ? (
+              <>
+                {' '}
+                <AppointmentDateBadge date={call.appointmentDate} time={call.appointmentTime} />
+              </>
+            ) : null}
           </dd>
         </div>
         <div>
@@ -325,8 +350,11 @@ function SchedulingJobCard({ job }: { job: DaySchedulingJob }) {
         <div>
           <dt>Appointment</dt>
           <dd>
-            {order.appointmentDate || '—'}
-            {order.appointmentTime ? ` at ${order.appointmentTime}` : ''}
+            {order.appointmentDate ? (
+              <AppointmentDateBadge date={order.appointmentDate} time={order.appointmentTime} />
+            ) : (
+              '—'
+            )}
           </dd>
         </div>
         <div>
@@ -1002,9 +1030,15 @@ export default function CallIntake({
           </div>
         </div>
         {visibleCalls.map((call) => (
-          <article key={call.id} className="call-intake__call">
+          <article
+            key={call.id}
+            className={
+              call.appointmentDate ? 'call-intake__call call-intake__call--dated' : 'call-intake__call'
+            }
+          >
             <header>
               <strong>{call.recordingName || call.callerPhone || 'Untitled Plaud recording'}</strong>
+              <AppointmentDateBadge date={call.appointmentDate} time={call.appointmentTime} />
               <span>{call.startedAt ? new Date(call.startedAt).toLocaleString() : ''}</span>
               {formatDuration(call.durationMs) && <span>{formatDuration(call.durationMs)}</span>}
               <span className={`call-intake__status call-intake__status--${call.status}`}>
@@ -1036,14 +1070,18 @@ export default function CallIntake({
             </header>
             {call.summary && <p>{call.summary}</p>}
             {!call.summary && call.plaudSummary && <p>{call.plaudSummary}</p>}
-            {call.appointmentMade && (
+            {call.appointmentDate ? (
+              <p className="call-intake__appointment-date">
+                Install date
+                <AppointmentDateBadge date={call.appointmentDate} time={call.appointmentTime} />
+                {call.workOrderId ? <span>Work order: {call.workOrderId}</span> : null}
+              </p>
+            ) : call.appointmentMade ? (
               <p className="call-intake__appointment">
                 Water-heater appointment detected
-                {call.appointmentDate ? ` · ${call.appointmentDate}` : ''}
-                {call.appointmentTime ? ` at ${call.appointmentTime}` : ''}
                 {call.workOrderId ? ` · Work order: ${call.workOrderId}` : ''}
               </p>
-            )}
+            ) : null}
             {reviewReasonsForCall(call).length > 0 && (
               <div className="call-intake__review">
                 <strong>
