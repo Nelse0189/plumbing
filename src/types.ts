@@ -79,6 +79,7 @@ export interface PlaudCall {
   status: 'processed' | 'needs_review' | 'failed' | 'awaiting_transcript' | 'processing' | 'in_plaud';
   error?: string;
   source?: string;
+  hasSpeakerLabels?: boolean;
 }
 
 export interface PlaudConnection {

@@ -75,8 +75,25 @@ function callNeedsProcessing(call: PlaudCall): boolean {
     call.status === 'in_plaud' ||
     call.status === 'awaiting_transcript' ||
     call.status === 'failed' ||
+    call.source === 'plaud-whisper' ||
     !call.summary
   );
+}
+
+function transcriptSourceLabel(call: PlaudCall): string {
+  if (call.source === 'plaud-whisper') {
+    return 'Transcribed here without speaker names. Process again to retry Plaud’s labeled transcript.';
+  }
+  if (call.hasSpeakerLabels || call.source === 'plaud') {
+    return 'Plaud transcript with speaker names';
+  }
+  if (call.source === 'plaud-unlabeled') {
+    return 'Plaud transcript (no speaker names in the file)';
+  }
+  if (call.source === 'plaud-manual') {
+    return 'Pasted transcript';
+  }
+  return call.source || '';
 }
 
 function dispatchLaneLabel(lane: DaySchedulingJob['dispatchLane']): string {
@@ -160,6 +177,10 @@ function CallSummaryBody({ call }: { call: PlaudCall }) {
         <div>
           <dt>Phone</dt>
           <dd>{call.callerPhone || '—'}</dd>
+        </div>
+        <div>
+          <dt>Transcript</dt>
+          <dd>{transcriptSourceLabel(call) || '—'}</dd>
         </div>
       </dl>
       {call.error ? <p className="call-intake__error">{call.error}</p> : null}
@@ -410,7 +431,7 @@ export default function CallIntake({
       const processed = mergeProcessedCall(
         await processPlaudCall({
           callId: call.id,
-          force: call.status === 'failed',
+          force: call.status === 'failed' || call.source === 'plaud-whisper',
         })
       );
       if (openPopup) setSummaryCall(processed);
@@ -424,6 +445,10 @@ export default function CallIntake({
   };
 
   const handleShowSummary = async (call: PlaudCall) => {
+    if (call.summary && (call.source === 'plaud-whisper' || call.hasSpeakerLabels)) {
+      setSummaryCall(call);
+      return;
+    }
     if (callNeedsProcessing(call)) {
       await handleProcessCall(call, true);
       return;
@@ -814,7 +839,11 @@ console.log('click a Plaud recording now');`}</pre>
                     disabled={processingAll || processingCallId !== null}
                     onClick={() => void handleProcessCall(call, true)}
                   >
-                    {processingCallId === call.id ? 'Processing…' : 'Process'}
+                    {processingCallId === call.id
+                      ? 'Processing…'
+                      : call.source === 'plaud-whisper'
+                        ? 'Retry Plaud transcript'
+                        : 'Process'}
                   </button>
                 ) : null}
                 <button
@@ -836,13 +865,18 @@ console.log('click a Plaud recording now');`}</pre>
             )}
             {call.status === 'in_plaud' && (
               <p className="call-intake__waiting">
-                This recording is in Plaud. Click Process to pull Plaud’s transcript, or we will transcribe the audio ourselves.
+                This recording is in Plaud. Click Process to pull Plaud’s transcript with speaker names.
               </p>
             )}
             {call.status === 'awaiting_transcript' && (
               <p className="call-intake__waiting">
                 {call.error ||
-                  'Plaud has the recording, but no transcript yet. Click Process and we will transcribe the audio ourselves.'}
+                  'Plaud has the recording, but no transcript yet. Click Process to fetch Plaud’s speaker-labeled transcript.'}
+              </p>
+            )}
+            {call.source === 'plaud-whisper' && call.transcript && (
+              <p className="call-intake__waiting">
+                This call was transcribed here without speaker names. Click Process to retry Plaud’s labeled transcript.
               </p>
             )}
             {call.error && <p className="call-intake__error">{call.error}</p>}
@@ -856,7 +890,13 @@ console.log('click a Plaud recording now');`}</pre>
             {call.transcript && (
               <details>
                 <summary>
-                  Transcript {call.appointmentEvidence?.quote ? '— appointment highlighted' : ''}
+                  Transcript
+                  {call.hasSpeakerLabels || call.source === 'plaud'
+                    ? ' — Plaud speakers'
+                    : call.source === 'plaud-whisper'
+                      ? ' — no speaker names'
+                      : ''}
+                  {call.appointmentEvidence?.quote ? ' — appointment highlighted' : ''}
                 </summary>
                 <TranscriptWithEvidence call={call} />
               </details>

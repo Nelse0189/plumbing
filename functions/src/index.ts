@@ -1157,6 +1157,8 @@ type PlaudFileDetail = PlaudFileSummary & {
   note_list?: PlaudDataItem[];
   content_list?: PlaudDataItem[];
   transcriptText?: string;
+  transcriptOrigin?: string;
+  speakerCount?: number;
 };
 
 type PlaudSession = {
@@ -1170,7 +1172,10 @@ type PlaudSession = {
 type PlaudSegment = {
   start_time?: number;
   end_time?: number;
+  start?: number;
   speaker?: string;
+  original_speaker?: string;
+  speaker_id?: string;
   content?: string;
   text?: string;
 };
@@ -1217,6 +1222,105 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function parseJsonValue(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) return value;
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return value;
+  }
+}
+
+function looksLikePlaudSegments(value: unknown): value is unknown[] {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  const first = asRecord(value[0]);
+  return Boolean(
+    asTrimmedString(first.content) ||
+      asTrimmedString(first.text) ||
+      asTrimmedString(first.speaker) ||
+      asTrimmedString(first.original_speaker) ||
+      first.start_time != null ||
+      first.start != null ||
+      first.end_time != null
+  );
+}
+
+function plaudSegmentsFromUnknown(value: unknown, depth = 0): unknown[] {
+  if (depth > 8 || value == null) return [];
+  const parsed = parseJsonValue(value);
+  if (looksLikePlaudSegments(parsed)) return parsed;
+  if (Array.isArray(parsed)) {
+    for (const item of parsed) {
+      const nested = plaudSegmentsFromUnknown(item, depth + 1);
+      if (nested.length) return nested;
+    }
+    return [];
+  }
+  const record = asRecord(parsed);
+  for (const key of [
+    "trans_result",
+    "segments",
+    "data_result",
+    "source_list",
+    "results",
+    "data",
+    "data_file",
+    "data_file_list",
+  ]) {
+    if (record[key] === undefined) continue;
+    const nested = plaudSegmentsFromUnknown(record[key], depth + 1);
+    if (nested.length) return nested;
+  }
+  return [];
+}
+
+function plaudSpeakerName(seg: PlaudSegment): string {
+  return (
+    asTrimmedString(seg.speaker) ||
+    asTrimmedString(seg.original_speaker) ||
+    asTrimmedString(seg.speaker_id)
+  );
+}
+
+function countPlaudSpeakers(segments: unknown[]): number {
+  const names = new Set<string>();
+  for (const item of segments) {
+    const speaker = plaudSpeakerName(asRecord(item) as PlaudSegment);
+    if (speaker) names.add(speaker);
+  }
+  return names.size;
+}
+
+function transcriptLooksSpeakerLabeled(transcript: string): boolean {
+  return /\]\s*[^[\]\n:]{1,80}:\s+\S/.test(transcript) || /^[^[\]\n:]{1,80}:\s+\S/m.test(transcript);
+}
+
+function describePlaudPayload(payload: unknown): Record<string, unknown> {
+  const record = asRecord(payload);
+  const data = asRecord(record.data);
+  const trans = record.trans_result ?? data.trans_result;
+  const list = Array.isArray(record.data_file_list)
+    ? record.data_file_list
+    : Array.isArray(data.data_file_list)
+      ? data.data_file_list
+      : [];
+  return {
+    topKeys: Object.keys(record).slice(0, 24),
+    dataKeys: Object.keys(data).slice(0, 24),
+    transResultType: trans === undefined ? "missing" : Array.isArray(trans) ? `array:${trans.length}` : typeof trans,
+    contentListLen: Array.isArray(data.content_list)
+      ? data.content_list.length
+      : Array.isArray(record.content_list)
+        ? record.content_list.length
+        : 0,
+    fileListLen: list.length,
+    status: record.status,
+    msg: asTrimmedString(record.msg).slice(0, 80),
+  };
 }
 
 function plaudFileId(value: unknown): string {
@@ -1638,17 +1742,25 @@ async function mintPlaudWorkspaceToken(userToken: string, apiBase: string, schem
   return best;
 }
 
-async function plaudRequest<T>(path: string, retry = true): Promise<T> {
+async function plaudRequest<T>(
+  path: string,
+  retry = true,
+  init?: { method?: string; json?: unknown }
+): Promise<T> {
   const session = await getPlaudSession();
+  const method = init?.method || "GET";
   const headers =
     session.mode === "consumer"
       ? plaudConsumerHeaders(session.accessToken, session.authScheme || "Bearer")
       : {
           Authorization: `Bearer ${session.accessToken}`,
           Accept: "application/json",
+          ...(init?.json !== undefined ? { "Content-Type": "application/json" } : {}),
         };
   const response = await fetch(`${session.apiBase}${path}`, {
+    method,
     headers,
+    body: init?.json !== undefined ? JSON.stringify(init.json) : undefined,
   });
   const raw = await response.text();
   let payload: Record<string, unknown> = {};
@@ -1663,7 +1775,7 @@ async function plaudRequest<T>(path: string, retry = true): Promise<T> {
       { apiBase: redirected, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
       { merge: true }
     );
-    return plaudRequest<T>(path, false);
+    return plaudRequest<T>(path, false, init);
   }
   if (response.status === 401 && retry) {
     if (session.mode === "developer") {
@@ -1671,14 +1783,14 @@ async function plaudRequest<T>(path: string, retry = true): Promise<T> {
         { accessToken: "", expiresAtMs: 0 },
         { merge: true }
       );
-      return plaudRequest<T>(path, false);
+      return plaudRequest<T>(path, false, init);
     }
     if (session.mode === "consumer" && session.userToken) {
       await admin.firestore().doc(PLAUD_AUTH_DOC).set(
         { accessToken: "", expiresAtMs: 0 },
         { merge: true }
       );
-      return plaudRequest<T>(path, false);
+      return plaudRequest<T>(path, false, init);
     }
   }
   if (!response.ok) {
@@ -1692,15 +1804,36 @@ async function plaudRequest<T>(path: string, retry = true): Promise<T> {
   return payload as T;
 }
 
+async function plaudRequestOptional(
+  path: string,
+  init?: { method?: string; json?: unknown }
+): Promise<unknown | null> {
+  try {
+    return await plaudRequest<unknown>(path, true, init);
+  } catch (error) {
+    console.warn("Plaud optional request failed", {
+      path,
+      method: init?.method || "GET",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
 function plaudStatusOk(payload: Record<string, unknown>): boolean {
   const status = payload.status;
+  const msg = asTrimmedString(payload.msg).toLowerCase();
   return (
     status === undefined ||
     status === 0 ||
     status === "0" ||
+    status === 1 ||
+    status === "1" ||
     status === 200 ||
     status === "200" ||
-    status === "success"
+    status === "success" ||
+    msg === "success" ||
+    msg === "task processing"
   );
 }
 
@@ -1934,6 +2067,14 @@ function unwrapPlaudFile(payload: unknown): PlaudFileDetail {
       : Array.isArray(file.noteList)
         ? (file.noteList as PlaudDataItem[])
         : [],
+    transcriptText: transcriptFromPlaudPayload(payload) || plaudTranscriptFromDetail({
+      id: plaudFileId(file),
+      source_list: Array.isArray(file.source_list)
+        ? (file.source_list as PlaudDataItem[])
+        : Array.isArray(file.sourceList)
+          ? (file.sourceList as PlaudDataItem[])
+          : [],
+    }),
   };
 }
 
@@ -1943,13 +2084,21 @@ function segmentsToTranscript(segments: unknown[]): string {
       const seg = asRecord(item) as PlaudSegment;
       const content = asTrimmedString(seg.content) || asTrimmedString(seg.text);
       if (!content) return "";
-      const speaker = asTrimmedString(seg.speaker);
-      return `[${formatPlaudClock(Number(seg.start_time) || 0)} - ${formatPlaudClock(Number(seg.end_time) || 0)}] ${
+      const speaker = plaudSpeakerName(seg);
+      const start = Number(seg.start_time ?? seg.start) || 0;
+      const end = Number(seg.end_time) || 0;
+      return `[${formatPlaudClock(start)} - ${formatPlaudClock(end)}] ${
         speaker ? `${speaker}: ` : ""
       }${content}`;
     })
     .filter(Boolean)
     .join("\n");
+}
+
+function transcriptFromPlaudPayload(payload: unknown): string {
+  const segments = plaudSegmentsFromUnknown(payload);
+  if (segments.length) return segmentsToTranscript(segments);
+  return "";
 }
 
 function plaudTranscriptFromDetail(detail: PlaudFileDetail): string {
@@ -2053,6 +2202,7 @@ async function ingestPlaudCallRecord(input: {
   serialNumber?: string;
   plaudSummary?: string;
   source?: string;
+  hasSpeakerLabels?: boolean;
   force?: boolean;
 }): Promise<PlaudSyncResult> {
   const callId = asTrimmedString(input.callId);
@@ -2101,10 +2251,12 @@ async function ingestPlaudCallRecord(input: {
       plaudSummary: asTrimmedString(input.plaudSummary),
       status: transcript.length >= 20 ? "processing" : "awaiting_transcript",
       source: asTrimmedString(input.source) || "plaud",
+      hasSpeakerLabels:
+        input.hasSpeakerLabels === true || transcriptLooksSpeakerLabeled(transcript),
       error:
         transcript.length >= 20
           ? admin.firestore.FieldValue.delete()
-          : "Plaud has this recording, but no transcript came back yet. If you can already read it on web.plaud.ai, click Process again.",
+          : "Plaud has this recording, but no transcript came back yet. If you can already read speaker names on web.plaud.ai, click Process again.",
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       createdAt: existing.exists
         ? previous.createdAt || admin.firestore.FieldValue.serverTimestamp()
@@ -2207,16 +2359,48 @@ async function ingestPlaudCallRecord(input: {
   }
 }
 
-function unwrapConsumerFile(payload: unknown): PlaudFileDetail {
+function firstPlaudFileRecord(payload: unknown): Record<string, unknown> {
   const record = asRecord(payload);
-  const file = asRecord(record.data);
-  const source = plaudFileId(file) ? file : record;
-  const trans = asRecord(source.trans_result);
-  const segments = Array.isArray(trans.segments)
-    ? trans.segments
-    : Array.isArray(source.segments)
-      ? source.segments
+  const data = asRecord(record.data);
+  const list = Array.isArray(record.data_file_list)
+    ? record.data_file_list
+    : Array.isArray(data.data_file_list)
+      ? data.data_file_list
       : [];
+  const first = asRecord(list[0]);
+  if (plaudFileId(first)) return { ...data, ...first };
+  if (plaudFileId(data)) return { ...data, ...first };
+  return { ...record, ...data, ...first };
+}
+
+function mergePlaudContentLists(...lists: Array<PlaudDataItem[] | undefined>): PlaudDataItem[] {
+  const merged: PlaudDataItem[] = [];
+  const seen = new Set<string>();
+  for (const list of lists) {
+    for (const item of list || []) {
+      const key =
+        asTrimmedString(item.data_id) ||
+        `${asTrimmedString(item.data_type)}:${asTrimmedString(item.data_link)}`;
+      if (key && seen.has(key)) continue;
+      if (key) seen.add(key);
+      merged.push(item);
+    }
+  }
+  return merged;
+}
+
+function preferPlaudTranscript(current: string, next: string): string {
+  const currentLabeled = transcriptLooksSpeakerLabeled(current);
+  const nextLabeled = transcriptLooksSpeakerLabeled(next);
+  if (nextLabeled && !currentLabeled) return next;
+  if (currentLabeled && !nextLabeled) return current;
+  return next.length > current.length ? next : current;
+}
+
+function unwrapConsumerFile(payload: unknown): PlaudFileDetail {
+  const source = firstPlaudFileRecord(payload);
+  const segments = plaudSegmentsFromUnknown(payload);
+  const speakerCount = countPlaudSpeakers(segments);
   const startedAt =
     plaudEpochToIso(source.start_time) ||
     asTrimmedString(source.start_at) ||
@@ -2224,6 +2408,10 @@ function unwrapConsumerFile(payload: unknown): PlaudFileDetail {
   const contentList = Array.isArray(source.content_list)
     ? (source.content_list as PlaudDataItem[])
     : [];
+  const aiContent = asTrimmedString(source.ai_content);
+  const transText = asTrimmedString(asRecord(parseJsonValue(source.trans_result)).text);
+  const transcriptText =
+    segmentsToTranscript(segments) || transText || asTrimmedString(source.transcript);
   return {
     id: plaudFileId(source),
     name:
@@ -2243,14 +2431,15 @@ function unwrapConsumerFile(payload: unknown): PlaudFileDetail {
     source_list: Array.isArray(source.source_list)
       ? (source.source_list as PlaudDataItem[])
       : [],
-    note_list: Array.isArray(source.note_list)
-      ? (source.note_list as PlaudDataItem[])
-      : [],
+    note_list: aiContent
+      ? [{ data_type: "auto_sum_note", data_content: summaryFromLinkedPayload(aiContent) }]
+      : Array.isArray(source.note_list)
+        ? (source.note_list as PlaudDataItem[])
+        : [],
     content_list: contentList,
-    transcriptText:
-      segmentsToTranscript(segments) ||
-      asTrimmedString(trans.text) ||
-      asTrimmedString(source.transcript),
+    transcriptText,
+    speakerCount,
+    transcriptOrigin: transcriptText ? "payload" : undefined,
   };
 }
 
@@ -2326,16 +2515,11 @@ async function resolvePlaudLinkedContent(
   return fetchPlaudLinkedText(link);
 }
 
-async function fetchPlaudFileDetail(fileId: string): Promise<PlaudFileDetail> {
-  const session = await getPlaudSession();
-  if (session.mode !== "consumer") {
-    return unwrapPlaudFile(
-      await plaudRequest<unknown>(`/open/third-party/files/${encodeURIComponent(fileId)}`)
-    );
-  }
-  const payload = await plaudRequest<unknown>(`/file/detail/${encodeURIComponent(fileId)}`);
-  const detail = unwrapConsumerFile(payload);
-  const source = asRecord(asRecord(payload).data);
+async function applyPlaudLinkedTranscript(
+  detail: PlaudFileDetail,
+  payload: unknown
+): Promise<PlaudFileDetail> {
+  const source = firstPlaudFileRecord(payload);
   const preloaded = new Map<string, string>();
   const preList = Array.isArray(source.pre_download_content_list)
     ? source.pre_download_content_list
@@ -2345,39 +2529,168 @@ async function fetchPlaudFileDetail(fileId: string): Promise<PlaudFileDetail> {
     const id = asTrimmedString(record.data_id);
     if (id) preloaded.set(id, asTrimmedString(record.data_content));
   }
-  const transcriptItem = pickPlaudContent(detail.content_list, [
+  const contentList = mergePlaudContentLists(
+    detail.content_list,
+    Array.isArray(source.content_list) ? (source.content_list as PlaudDataItem[]) : []
+  );
+  const transcriptItem = pickPlaudContent(contentList, [
     "transaction_polish",
     "transaction",
   ]);
-  const summaryItem = pickPlaudContent(detail.content_list, [
+  const summaryItem = pickPlaudContent(contentList, [
     "auto_sum_note",
     "sum_multi_note",
   ]);
-  let transcript = plaudTranscriptFromDetail(detail);
-  if (transcript.length < 20) {
-    transcript = transcriptFromLinkedPayload(
-      await resolvePlaudLinkedContent(transcriptItem, preloaded)
-    );
-  }
-  let plaudSummary = plaudSummaryFromDetail(detail);
+  let transcript = plaudTranscriptFromDetail({ ...detail, content_list: contentList });
+  const linkedTranscript = transcriptFromLinkedPayload(
+    await resolvePlaudLinkedContent(transcriptItem, preloaded)
+  );
+  transcript = preferPlaudTranscript(transcript, linkedTranscript);
+  let plaudSummary = plaudSummaryFromDetail({ ...detail, content_list: contentList });
   if (!plaudSummary) {
     plaudSummary = summaryFromLinkedPayload(
       await resolvePlaudLinkedContent(summaryItem, preloaded)
     );
   }
-  console.log("Plaud file detail transcript", {
-    fileId,
-    contentTypes: (detail.content_list || []).map((item) => item.data_type),
-    hasTranscriptLink: Boolean(asTrimmedString(transcriptItem?.data_link)),
-    transcriptChars: transcript.length,
-    summaryChars: plaudSummary.length,
-  });
+  const speakerCount = Math.max(
+    detail.speakerCount || 0,
+    countPlaudSpeakers(plaudSegmentsFromUnknown(linkedTranscript || transcript))
+  );
   return {
     ...detail,
+    content_list: contentList,
     transcriptText: transcript,
+    speakerCount: transcriptLooksSpeakerLabeled(transcript)
+      ? Math.max(speakerCount, 1)
+      : speakerCount,
+    transcriptOrigin: transcriptLooksSpeakerLabeled(transcript)
+      ? detail.transcriptOrigin || "content_list"
+      : detail.transcriptOrigin,
     note_list: plaudSummary
       ? [{ data_type: "auto_sum_note", data_content: plaudSummary }]
       : detail.note_list,
+  };
+}
+
+async function fetchPlaudTranssumm(fileId: string): Promise<unknown | null> {
+  const started = Date.now();
+  let last: unknown = null;
+  while (Date.now() - started < 90000) {
+    const payload = await plaudRequestOptional(
+      `/ai/transsumm/${encodeURIComponent(fileId)}`,
+      { method: "POST", json: { is_reload: 0, support_mul_summ: true } }
+    );
+    if (!payload) return last;
+    last = payload;
+    const record = asRecord(payload);
+    const transcript = transcriptFromPlaudPayload(payload);
+    const complete =
+      record.status === 1 ||
+      record.data_result != null ||
+      transcript.length >= 20 ||
+      (asTrimmedString(record.msg).toLowerCase() === "success" &&
+        asTrimmedString(record.msg).toLowerCase() !== "task processing");
+    if (complete) return payload;
+    if (asTrimmedString(record.msg).toLowerCase() !== "task processing") {
+      return payload;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+  return last;
+}
+
+async function fetchPlaudFileDetail(fileId: string): Promise<PlaudFileDetail> {
+  const session = await getPlaudSession();
+  if (session.mode !== "consumer") {
+    const payload = await plaudRequest<unknown>(
+      `/open/third-party/files/${encodeURIComponent(fileId)}`
+    );
+    const detail = unwrapPlaudFile(payload);
+    const transcript = preferPlaudTranscript(
+      plaudTranscriptFromDetail(detail),
+      transcriptFromPlaudPayload(payload)
+    );
+    return {
+      ...detail,
+      transcriptText: transcript,
+      speakerCount: countPlaudSpeakers(plaudSegmentsFromUnknown(payload)),
+      transcriptOrigin: transcript ? "developer" : undefined,
+    };
+  }
+
+  const attempts: Array<{ from: string; payload: unknown | null }> = [];
+  const detailPayload = await plaudRequest<unknown>(
+    `/file/detail/${encodeURIComponent(fileId)}`
+  );
+  attempts.push({ from: "file/detail", payload: detailPayload });
+  let best = unwrapConsumerFile(detailPayload);
+  let payloadForLinks: unknown = detailPayload;
+
+  const consider = (from: string, payload: unknown | null) => {
+    if (!payload) return;
+    attempts.push({ from, payload });
+    const next = unwrapConsumerFile(payload);
+    const currentText = plaudTranscriptFromDetail(best);
+    const nextText = plaudTranscriptFromDetail(next);
+    const chosen = preferPlaudTranscript(currentText, nextText);
+    best = {
+      ...best,
+      ...next,
+      id: best.id || next.id,
+      name: best.name || next.name,
+      content_list: mergePlaudContentLists(best.content_list, next.content_list),
+      source_list: mergePlaudContentLists(best.source_list, next.source_list),
+      note_list: (next.note_list && next.note_list.length ? next.note_list : best.note_list) || [],
+      transcriptText: chosen,
+      speakerCount: Math.max(best.speakerCount || 0, next.speakerCount || 0),
+      transcriptOrigin: chosen === nextText && nextText ? from : best.transcriptOrigin,
+    };
+    if (chosen === nextText && nextText) payloadForLinks = payload;
+  };
+
+  if (!transcriptLooksSpeakerLabeled(plaudTranscriptFromDetail(best))) {
+    consider(
+      "file",
+      await plaudRequestOptional(`/file/${encodeURIComponent(fileId)}`)
+    );
+  }
+  if (!transcriptLooksSpeakerLabeled(plaudTranscriptFromDetail(best))) {
+    consider(
+      "file/list",
+      await plaudRequestOptional("/file/list", {
+        method: "POST",
+        json: [fileId],
+      })
+    );
+  }
+
+  best = await applyPlaudLinkedTranscript(best, payloadForLinks);
+
+  if (!transcriptLooksSpeakerLabeled(plaudTranscriptFromDetail(best))) {
+    consider("ai/transsumm", await fetchPlaudTranssumm(fileId));
+    best = await applyPlaudLinkedTranscript(best, payloadForLinks);
+  }
+
+  const transcript = plaudTranscriptFromDetail(best);
+  console.log("Plaud file detail transcript", {
+    fileId,
+    origin: best.transcriptOrigin,
+    speakerCount: best.speakerCount || 0,
+    labeled: transcriptLooksSpeakerLabeled(transcript),
+    transcriptChars: transcript.length,
+    summaryChars: plaudSummaryFromDetail(best).length,
+    contentTypes: (best.content_list || []).map((item) => item.data_type),
+    attempts: attempts.map((attempt) => ({
+      from: attempt.from,
+      ...describePlaudPayload(attempt.payload),
+      transcriptChars: attempt.payload
+        ? transcriptFromPlaudPayload(attempt.payload).length
+        : 0,
+    })),
+  });
+  return {
+    ...best,
+    transcriptText: transcript,
   };
 }
 
@@ -2460,7 +2773,7 @@ async function transcribeAudioWithOpenAi(audio: Buffer, filename: string): Promi
 
 async function ingestPlaudFile(
   file: PlaudFileSummary,
-  options: { transcribeIfMissing?: boolean } = {}
+  options: { transcribeIfMissing?: boolean; fallbackTranscript?: string } = {}
 ): Promise<PlaudSyncResult> {
   const detail = await fetchPlaudFileDetail(file.id);
   const startedAt =
@@ -2472,7 +2785,14 @@ async function ingestPlaudFile(
   let plaudSummary = plaudSummaryFromDetail(detail);
   let source = "plaud";
   let awaitingReason = "";
-  if (transcript.length < 20 && options.transcribeIfMissing) {
+  const plaudHasSpeakers =
+    (detail.speakerCount || 0) > 0 || transcriptLooksSpeakerLabeled(transcript);
+  if (transcript.length >= 20) {
+    source = plaudHasSpeakers ? "plaud" : "plaud-unlabeled";
+  } else if (asTrimmedString(options.fallbackTranscript).length >= 20) {
+    transcript = asTrimmedString(options.fallbackTranscript);
+    source = transcriptLooksSpeakerLabeled(transcript) ? "plaud" : "plaud-whisper";
+  } else if (options.transcribeIfMissing) {
     try {
       const audio = await downloadPlaudAudio(file.id, detail);
       transcript = await transcribeAudioWithOpenAi(audio.buffer, audio.filename);
@@ -2495,6 +2815,7 @@ async function ingestPlaudFile(
     serialNumber: asTrimmedString(detail.serial_number) || asTrimmedString(file.serial_number),
     plaudSummary,
     source,
+    hasSpeakerLabels: source === "plaud" && (plaudHasSpeakers || transcriptLooksSpeakerLabeled(transcript)),
   });
   if (result.status === "awaiting_transcript" && awaitingReason) {
     await admin.firestore().collection(PLAUD_CALLS_COLLECTION).doc(
@@ -2729,6 +3050,8 @@ function serializePlaudCall(documentId: string, data: admin.firestore.DocumentDa
     status: asTrimmedString(data.status) || "needs_review",
     error: asTrimmedString(data.error) || undefined,
     source: asTrimmedString(data.source) || undefined,
+    hasSpeakerLabels:
+      data.hasSpeakerLabels === true || transcriptLooksSpeakerLabeled(asTrimmedString(data.transcript)),
   };
 }
 
@@ -2747,13 +3070,24 @@ export const processPlaudCall = onCall(
     const previous = existing.data() || {};
     const fileId = plaudApiFileId(requestedId, asTrimmedString(previous.callId));
     const existingTranscript = asTrimmedString(previous.transcript);
+    const existingSource = asTrimmedString(previous.source);
+    const hasPlaudSpeakers =
+      previous.hasSpeakerLabels === true ||
+      (existingSource === "plaud" && transcriptLooksSpeakerLabeled(existingTranscript));
     const alreadyDone =
       !force &&
       existingTranscript.length >= 20 &&
+      hasPlaudSpeakers &&
       (previous.status === "processed" || previous.status === "needs_review");
 
     if (!alreadyDone) {
-      if (existingTranscript.length >= 20) {
+      if (fileId.startsWith("manual-")) {
+        if (existingTranscript.length < 20) {
+          throw new HttpsError(
+            "failed-precondition",
+            "This manual import has no transcript to process."
+          );
+        }
         await ingestPlaudCallRecord({
           callId: fileId,
           transcript: existingTranscript,
@@ -2764,24 +3098,25 @@ export const processPlaudCall = onCall(
             typeof previous.durationMs === "number" ? previous.durationMs : undefined,
           serialNumber: asTrimmedString(previous.serialNumber),
           plaudSummary: asTrimmedString(previous.plaudSummary),
-          source: asTrimmedString(previous.source) || "plaud",
+          source: existingSource || "plaud-manual",
           force,
         });
-      } else if (fileId.startsWith("manual-")) {
-        throw new HttpsError(
-          "failed-precondition",
-          "This manual import has no transcript to process."
-        );
       } else {
-        await ingestPlaudFile({
-          id: fileId,
-          name: asTrimmedString(previous.recordingName) || undefined,
-          created_at: asTrimmedString(previous.startedAt) || undefined,
-          start_at: asTrimmedString(previous.startedAt) || undefined,
-          duration:
-            typeof previous.durationMs === "number" ? previous.durationMs : undefined,
-          serial_number: asTrimmedString(previous.serialNumber) || undefined,
-        }, { transcribeIfMissing: true });
+        await ingestPlaudFile(
+          {
+            id: fileId,
+            name: asTrimmedString(previous.recordingName) || undefined,
+            created_at: asTrimmedString(previous.startedAt) || undefined,
+            start_at: asTrimmedString(previous.startedAt) || undefined,
+            duration:
+              typeof previous.durationMs === "number" ? previous.durationMs : undefined,
+            serial_number: asTrimmedString(previous.serialNumber) || undefined,
+          },
+          {
+            transcribeIfMissing: existingTranscript.length < 20,
+            fallbackTranscript: existingTranscript,
+          }
+        );
       }
     }
 
