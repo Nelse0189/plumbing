@@ -31,10 +31,11 @@ admin.initializeApp();
  */
 const strOpenAiApiKey = defineString("OPENAI_API_KEY", { default: "" });
 const strOpenAiModel = defineString("OPENAI_MODEL", {
-  default: "gpt-4o-mini",
+  default: "gpt-5.6-sol",
 });
 
-const OPENAI_CHAT_FALLBACK = "gpt-4o-mini";
+const OPENAI_CHAT_FALLBACK = "gpt-5.6-sol";
+const OPENAI_CALL_ANALYSIS_MODEL = "gpt-5.6-sol";
 
 function openAiChatModel(): string {
   const raw =
@@ -70,7 +71,7 @@ async function openAiChatCompletions(
   const candidates = [
     params.model || openAiChatModel(),
     OPENAI_CHAT_FALLBACK,
-    "gpt-4.1-mini",
+    "gpt-5.6",
   ];
   const tried = new Set<string>();
   let lastError: unknown;
@@ -2624,7 +2625,7 @@ async function analyzeCallTranscript(
   }
   const callDate = callDateFromStartedAt(startedAt);
   const response = await openAiChatCompletions({
-    model: "gpt-4o",
+    model: OPENAI_CALL_ANALYSIS_MODEL,
     messages: [
       {
         role: "system",
