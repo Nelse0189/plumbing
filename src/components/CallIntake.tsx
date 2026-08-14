@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { PlaudCall, PlaudConnection, PlaudSyncSummary } from '../types';
 import {
@@ -11,6 +11,13 @@ import {
   processPlaudCalls,
   syncPlaudCalls,
 } from '../services/plaudService';
+import {
+  PLAUD_CONNECT_SOURCE,
+  consumePlaudConnectToken,
+  isAllowedPlaudConnectOrigin,
+  openPlaudConnectWindow,
+  plaudConnectBookmarkletHref,
+} from '../plaudConnect';
 import {
   getDaySchedulingInfo,
   type DaySchedulingInfo,
@@ -432,6 +439,8 @@ export default function CallIntake({
   const [connecting, setConnecting] = useState(false);
   const [webToken, setWebToken] = useState('');
   const [webApiBase, setWebApiBase] = useState('https://api.plaud.ai');
+  const [showReconnect, setShowReconnect] = useState(false);
+  const [connectHint, setConnectHint] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [processingCallId, setProcessingCallId] = useState<string | null>(null);
   const [processingAll, setProcessingAll] = useState(false);
@@ -440,6 +449,7 @@ export default function CallIntake({
   const [summaryCalls, setSummaryCalls] = useState<PlaudCall[] | null>(null);
   const [dayJobs, setDayJobs] = useState<DaySchedulingInfo | null>(null);
   const [loadingDayJobs, setLoadingDayJobs] = useState(false);
+  const connectingRef = useRef(false);
 
   const reload = async () => {
     setLoading(true);
@@ -460,11 +470,52 @@ export default function CallIntake({
     }
   };
 
+  const connectWithToken = useCallback(async (token: string) => {
+    const trimmed = token.trim();
+    if (trimmed.length < 20 || connectingRef.current) return;
+    connectingRef.current = true;
+    setConnecting(true);
+    setError(null);
+    setConnectHint('Connecting Plaud session…');
+    try {
+      await connectPlaudWebSession({
+        token: trimmed,
+        apiBase: webApiBase,
+      });
+      setWebToken('');
+      setShowReconnect(false);
+      setConnectHint('Plaud is connected. You can close the Plaud window.');
+      await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setConnectHint('');
+    } finally {
+      connectingRef.current = false;
+      setConnecting(false);
+    }
+    // reload is stable enough for this page; include webApiBase only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [webApiBase]);
+
   useEffect(() => {
     void reload();
+    const incoming = consumePlaudConnectToken();
+    if (incoming) void connectWithToken(incoming);
     // Load the full library once; day chips filter it locally.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (!isAllowedPlaudConnectOrigin(event.origin)) return;
+      const data = event.data as { source?: string; token?: string } | null;
+      if (!data || data.source !== PLAUD_CONNECT_SOURCE) return;
+      const token = String(data.token || '').trim();
+      if (token) void connectWithToken(token);
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [connectWithToken]);
 
   const visibleCalls = useMemo(() => {
     if (listScope === 'all') return calls;
@@ -611,7 +662,7 @@ export default function CallIntake({
           <p className={`call-intake__connection ${connection?.connected ? 'is-connected' : 'is-disconnected'}`}>
             {connection?.connected
               ? `Connected to Plaud${connection.mode === 'web' ? ' via web.plaud.ai' : ''}${connection.name || connection.email ? ` · ${connection.name || connection.email}` : ''}${connection.tokenType ? ` · ${connection.tokenType}` : ''}${connection.apiBase ? ` · ${connection.apiBase.replace(/^https:\/\//, '')}` : ''}${typeof connection.libraryCount === 'number' ? ` · ${connection.libraryCount} in Plaud` : ''}`
-              : 'Plaud CLI login is currently blocked by a broken Plaud “bind device” page. Connect with a web.plaud.ai session token below.'}
+              : 'Plaud is not connected. Open a Plaud window, sign in, then send that session back with the bookmark below.'}
           </p>
         </div>
         <div className="call-intake__actions">
@@ -676,6 +727,11 @@ export default function CallIntake({
           <button type="button" disabled={loading} onClick={() => void reload()}>
             {loading ? 'Loading…' : 'Refresh calls'}
           </button>
+          {connection?.connected ? (
+            <button type="button" onClick={() => setShowReconnect(true)}>
+              Reconnect Plaud
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -750,120 +806,119 @@ export default function CallIntake({
 
       {error && <div className="call-intake__error">{error}</div>}
 
-      {!connection?.connected && (
+      {(!connection?.connected || showReconnect) && (
         <section className="call-intake__mock">
-          <h3>Connect Plaud from web.plaud.ai</h3>
+          <h3>Connect Plaud</h3>
           <p>
-            Plaud’s official CLI login is showing a broken page
-            (<code>oauth_bind_device_title</code>). Use the normal website instead:
+            This site cannot read a hidden Plaud tab. Browsers block that. The
+            reliable way is to open Plaud in its own window, sign in as usual,
+            then send that login here with one click.
           </p>
           <ol className="call-intake__steps">
-            <li>Open <a href="https://web.plaud.ai" target="_blank" rel="noreferrer">https://web.plaud.ai</a> and sign in as usual.</li>
             <li>
-              In Edge, open Developer tools with <strong>Ctrl+Shift+I</strong>, or
-              right-click the page and choose <strong>Inspect</strong>. On many
-              laptops use <strong>Fn+F12</strong>. Or open the ⋯ menu → More tools → Developer tools.
+              Drag{' '}
+              <a
+                className="call-intake__bookmarklet"
+                href={plaudConnectBookmarkletHref()}
+                onClick={(event) => {
+                  event.preventDefault();
+                  setConnectHint(
+                    'Drag “Send to NJ Plumbing” onto your bookmarks bar. Then click that bookmark while the Plaud window is open.'
+                  );
+                }}
+              >
+                Send to NJ Plumbing
+              </a>{' '}
+              onto your bookmarks bar (one time).
             </li>
+            <li>Click Open Plaud window and sign in if asked.</li>
             <li>
-              You are in the right place: an <code>api.plaud.ai</code> request
-              and its <strong>Cookie</strong> / <strong>Cookies</strong> section.
-              You can paste the entire Cookie line into the box below. The app
-              will pull out <code>pld_wt</code> or <code>pld_ut</code> (the
-              value that starts with <code>eyJ</code>). If the Cookies panel is
-              a table, copy the Value for <code>pld_wt</code> first, or
-              <code>pld_ut</code> if that is the only <code>eyJ</code> cookie.
-              A semicolon only separates cookies; it is not part of the token.
-            </li>
-            <li>
-              <code>workspaceId</code> inside <code>pld_sessionMeta</code> is not
-              the token. Look at key names on the left of Local Storage, not
-              fields inside a JSON value.
-            </li>
-            <li>
-              If a ~360 character token is rejected, it is probably a user
-              token. On https://web.plaud.ai run this in Console, then click a
-              recording. It copies the next live Authorization token and prints
-              only the length:
-              <pre className="call-intake__transcript">{`const orig = window.fetch;
-window.fetch = async function(...args) {
-  const res = await orig.apply(this, args);
-  const headers = args[1] && args[1].headers;
-  const auth = headers instanceof Headers
-    ? (headers.get('Authorization') || '')
-    : ((headers && (headers.Authorization || headers.authorization)) || '');
-  if (/eyJ/.test(auth)) {
-    const token = auth.replace(/^(bearer|wt|ut|wrt)\\s+/i, '');
-    copy(token);
-    console.log('copied token length', token.length);
-    window.fetch = orig;
-  }
-  return res;
-};
-console.log('click a Plaud recording now');`}</pre>
-            </li>
-            <li>
-              If Network does not show Authorization, run this in the
-              <strong>Console</strong> tab. It prints key names only — paste
-              those names here if you get stuck:
-              <pre className="call-intake__transcript">{`['localStorage','sessionStorage'].forEach((label) => {
-  const store = label === 'localStorage' ? localStorage : sessionStorage;
-  Object.keys(store).forEach((k) => {
-    const v = store.getItem(k) || '';
-    const hints = [];
-    if (/workspaceList/i.test(k)) hints.push('name-has-workspaceList');
-    if (/token/i.test(k)) hints.push('name-has-token');
-    if (v.includes('workspaceToken')) hints.push('has-workspaceToken');
-    if (v.startsWith('eyJ') || v.includes('"eyJ')) hints.push('looks-like-jwt');
-    console.log(label, k, hints.join(',') || 'no-token-hints');
-  });
-});`}</pre>
+              When you can see your recordings, click the{' '}
+              <strong>Send to NJ Plumbing</strong> bookmark. The Plaud window
+              sends the session back here.
             </li>
           </ol>
-          <label>
-            Plaud web token
-            <textarea
-              value={webToken}
-              onChange={(event) => setWebToken(event.target.value)}
-              placeholder="Paste the whole Cookie line, or the eyJ... value"
-            />
-          </label>
+          <div className="call-intake__connect-actions">
+            <button
+              type="button"
+              className="call-intake__primary"
+              disabled={connecting}
+              onClick={() => {
+                const popup = openPlaudConnectWindow();
+                setConnectHint(
+                  popup
+                    ? 'Sign in in the Plaud window, then click the Send to NJ Plumbing bookmark while that window is focused.'
+                    : 'The browser blocked the Plaud popup. Allow popups, or open web.plaud.ai yourself and click the bookmark there.'
+                );
+              }}
+            >
+              Open Plaud window
+            </button>
+            {showReconnect && connection?.connected ? (
+              <button type="button" onClick={() => setShowReconnect(false)}>
+                Cancel
+              </button>
+            ) : null}
+            <a
+              className="call-intake__bookmarklet"
+              href={plaudConnectBookmarkletHref()}
+              onClick={(event) => {
+                event.preventDefault();
+                setConnectHint(
+                  'That button has to run on web.plaud.ai. Drag it to your bookmarks bar, then click it in the Plaud window.'
+                );
+              }}
+            >
+              Send to NJ Plumbing
+            </a>
+          </div>
+          {connectHint ? <p className="call-intake__sync">{connectHint}</p> : null}
           <p className="call-intake__sync">
-            {webToken.trim()
-              ? `Paste length: ${webToken.trim().length} characters${
-                  /pld_wt|pld_ut/i.test(webToken)
-                    ? '. This looks like a Cookie header — we will extract pld_wt or pld_ut.'
-                    : webToken.includes('eyJ')
-                      ? `. Found ${(webToken.match(/eyJ/g) || []).length} eyJ value(s).`
-                      : '. A real Plaud token starts with eyJ. If this is the Cookie line, paste the whole line.'
-                }`
-              : 'Paste the whole Cookie line from the api.plaud.ai request, or just the eyJ... cookie value. Do not paste the token into chat.'}
+            {connecting
+              ? 'Connecting…'
+              : 'If the bookmark cannot find a token, click any recording in Plaud and try once more.'}
           </p>
-          <label>
-            API base (usually leave this)
-            <input value={webApiBase} onChange={(event) => setWebApiBase(event.target.value)} />
-          </label>
-          <button
-            type="button"
-            disabled={connecting || webToken.trim().length < 20}
-            onClick={async () => {
-              setConnecting(true);
-              setError(null);
-              try {
-                await connectPlaudWebSession({
-                  token: webToken,
-                  apiBase: webApiBase,
-                });
-                setWebToken('');
-                await reload();
-              } catch (err) {
-                setError(err instanceof Error ? err.message : String(err));
-              } finally {
-                setConnecting(false);
-              }
-            }}
-          >
-            {connecting ? 'Connecting…' : 'Connect Plaud account'}
-          </button>
+          <details className="call-intake__manual-connect">
+            <summary>Paste a token instead</summary>
+            <p>
+              Open{' '}
+              <a href="https://web.plaud.ai" target="_blank" rel="noreferrer">
+                https://web.plaud.ai
+              </a>
+              , inspect an <code>api.plaud.ai</code> request, and paste the Cookie
+              line or the <code>eyJ...</code> value.
+            </p>
+            <label>
+              Plaud web token
+              <textarea
+                value={webToken}
+                onChange={(event) => setWebToken(event.target.value)}
+                placeholder="Paste the whole Cookie line, or the eyJ... value"
+              />
+            </label>
+            <p className="call-intake__sync">
+              {webToken.trim()
+                ? `Paste length: ${webToken.trim().length} characters${
+                    /pld_wt|pld_ut/i.test(webToken)
+                      ? '. This looks like a Cookie header — we will extract pld_wt or pld_ut.'
+                      : webToken.includes('eyJ')
+                        ? `. Found ${(webToken.match(/eyJ/g) || []).length} eyJ value(s).`
+                        : '. A real Plaud token starts with eyJ. If this is the Cookie line, paste the whole line.'
+                  }`
+                : 'Paste the whole Cookie line from the api.plaud.ai request, or just the eyJ... cookie value. Do not paste the token into chat.'}
+            </p>
+            <label>
+              API base (usually leave this)
+              <input value={webApiBase} onChange={(event) => setWebApiBase(event.target.value)} />
+            </label>
+            <button
+              type="button"
+              disabled={connecting || webToken.trim().length < 20}
+              onClick={() => void connectWithToken(webToken)}
+            >
+              {connecting ? 'Connecting…' : 'Connect Plaud account'}
+            </button>
+          </details>
         </section>
       )}
 

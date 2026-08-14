@@ -128,6 +128,37 @@
   background: var(--bg-secondary);
 }
 
+.call-intake__connect-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.call-intake__bookmarklet {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.4rem 0.75rem;
+  border: 1px dashed var(--accent);
+  border-radius: 999px;
+  background: var(--bg-primary);
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.call-intake__manual-connect {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.call-intake__manual-connect summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
 .call-intake__mock {
   display: grid;
   gap: 0.7rem;

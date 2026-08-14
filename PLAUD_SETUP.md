@@ -6,29 +6,20 @@ CLI (`plaud files`, `plaud transcript`, `plaud summary`).
 
 ## Connect from the Calls tab (recommended)
 
-Plaud's official CLI login currently shows a broken page with labels like
-`oauth_bind_device_title`. Use the normal Plaud website instead:
+This website cannot read a hidden Plaud tab. The browser blocks that. Open
+Plaud in its own window, then send the session back with one bookmark click.
 
-1. Open https://web.plaud.ai and sign in as usual.
-2. In Edge, open Developer tools with **Ctrl+Shift+I**, right-click → **Inspect**,
-   or **Fn+F12**. Or use ⋯ → More tools → Developer tools.
-3. Open the **Network** tab, refresh the page, and click a request whose URL
-   contains `api.plaud.ai`.
-4. Open **Cookies** or **Headers → Cookie**. You can paste the entire Cookie
-   line on the Calls tab. The app extracts `pld_wt` or `pld_ut` (the `eyJ...`
-   value). Semicolons only separate cookies.
-5. Ignore `pld_sessionMeta` / `token_id`. Those are not the login token.
-6. If Cookie has no `eyJ` value, try Local Storage → `https://web.plaud.ai` →
-   the key that ends with `:workspaceList` → copy `workspaceToken`.
-7. Or in the Console tab run:
+1. On the **Calls** tab, drag **Send to NJ Plumbing** onto the bookmarks bar
+   (one time).
+2. Click **Open Plaud window** and sign in at https://web.plaud.ai as usual.
+3. When you can see your recordings, click the **Send to NJ Plumbing** bookmark
+   while that Plaud window is focused. The session is sent back to the dispatch
+   app. If the bookmark cannot find a token yet, click any recording and try
+   once more.
+4. Use **Reconnect Plaud** later if the session expires.
 
-   ```js
-   const key = Object.keys(localStorage).find(k => k.endsWith(':workspaceList'));
-   const list = JSON.parse(localStorage.getItem(key) || '[]');
-   copy(list[0].workspaceToken);
-   ```
-
-8. On the dispatch **Calls** tab, paste that Cookie line or token and click **Connect Plaud account**.
+Paste-a-token is still available under **Paste a token instead** if the
+bookmark cannot run.
 
 Do not paste the token into chat. The Calls tab stores it in a private
 Firestore document used only by Cloud Functions.

@@ -6,11 +6,14 @@ import DispatchBoard from './components/DispatchBoard';
 import CallIntake from './components/CallIntake';
 import type { Truck, Schedule } from './types';
 import { getTrucksForDate, saveSchedule } from './services/scheduleService';
+import { takePlaudConnectTokenFromLocation } from './plaudConnect';
 import './App.css';
 
 function App() {
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
-  const [viewMode, setViewMode] = useState<'dispatch' | 'schedule' | 'map' | 'calls'>('dispatch');
+  const [viewMode, setViewMode] = useState<'dispatch' | 'schedule' | 'map' | 'calls'>(
+    () => (takePlaudConnectTokenFromLocation() ? 'calls' : 'dispatch')
+  );
   const [trucks, setTrucks] = useState<Truck[]>([
     { id: 'truck1', name: 'Truck 1', stops: [] },
     { id: 'truck2', name: 'Truck 2', stops: [] },
