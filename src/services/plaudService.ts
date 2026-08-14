@@ -39,6 +39,29 @@ export async function syncPlaudCalls(input: {
   return result.data;
 }
 
+export async function processPlaudCalls(input: {
+  date?: string;
+  days?: number;
+  allTime?: boolean;
+}): Promise<PlaudSyncSummary> {
+  const call = httpsCallable<typeof input, PlaudSyncSummary>(functions, 'processPlaudCalls', {
+    timeout: input.allTime ? 30 * 60 * 1000 : 9 * 60 * 1000,
+  });
+  const result = await call(input);
+  return result.data;
+}
+
+export async function processPlaudCall(input: {
+  callId: string;
+  force?: boolean;
+}): Promise<PlaudCall> {
+  const call = httpsCallable<typeof input, PlaudCall>(functions, 'processPlaudCall', {
+    timeout: 9 * 60 * 1000,
+  });
+  const result = await call(input);
+  return result.data;
+}
+
 export async function importPlaudTranscript(input: {
   transcript: string;
   callerPhone?: string;
@@ -55,9 +78,15 @@ export async function importPlaudTranscript(input: {
   return result.data;
 }
 
-export async function listPlaudCalls(date: string): Promise<PlaudCall[]> {
-  const call = httpsCallable<{ date: string }, PlaudCall[]>(functions, 'listPlaudCalls');
-  const result = await call({ date });
+export async function listPlaudCalls(input: {
+  date?: string;
+  allTime?: boolean;
+}): Promise<PlaudCall[]> {
+  const call = httpsCallable<{ date?: string; allTime?: boolean }, PlaudCall[]>(
+    functions,
+    'listPlaudCalls'
+  );
+  const result = await call(input);
   return result.data;
 }
 

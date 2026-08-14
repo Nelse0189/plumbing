@@ -51,6 +51,8 @@ export interface StoredWorkOrder extends WorkOrder {
   status: 'needs_review' | 'unscheduled' | 'scheduling' | 'scheduled' | 'closed';
   selectedTime?: string;
   cached?: boolean;
+  callSummary?: string;
+  source?: string;
 }
 
 export interface PlaudAppointmentEvidence {
@@ -73,10 +75,18 @@ export interface PlaudCall {
   customerServiceTips: string[];
   appointmentMade: boolean;
   workOrderId?: string;
+  workOrderNumber?: string;
   appointmentEvidence?: PlaudAppointmentEvidence;
-  status: 'processed' | 'needs_review' | 'failed' | 'awaiting_transcript' | 'processing';
+  reviewReasons?: string[];
+  customerName?: string;
+  phone?: string;
+  address?: string;
+  appointmentDate?: string;
+  appointmentTime?: string;
+  status: 'processed' | 'needs_review' | 'failed' | 'awaiting_transcript' | 'processing' | 'in_plaud';
   error?: string;
   source?: string;
+  hasSpeakerLabels?: boolean;
 }
 
 export interface PlaudConnection {
@@ -85,6 +95,9 @@ export interface PlaudConnection {
   email?: string;
   name?: string;
   error?: string;
+  libraryCount?: number;
+  apiBase?: string;
+  tokenType?: string;
 }
 
 export interface PlaudSyncSummary {
@@ -95,7 +108,12 @@ export interface PlaudSyncSummary {
   failed: number;
   awaitingTranscript: number;
   appointments: number;
+  processed?: number;
+  saved?: number;
+  remaining?: number;
+  incomplete?: boolean;
   scope?: string;
+  plaudTotal?: number;
 }
 
 /** 4-hour arrival window shown to the customer (HH:MM, 24h). */

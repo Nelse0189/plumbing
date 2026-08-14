@@ -20,6 +20,7 @@ import type {
   StoredWorkOrder,
   WorkOrder,
 } from '../types';
+import { getSchedule } from './scheduleService';
 import { geocodeAddress } from '../utils/geocode';
 import { haversineMiles, sortFarthestFirst } from '../utils/distance';
 import {
@@ -83,6 +84,8 @@ export async function listWorkOrdersForDate(date: string): Promise<StoredWorkOrd
     const data = document.data() as WorkOrder & {
       status?: string;
       selectedTime?: string;
+      callSummary?: string;
+      source?: string;
     };
     return {
       id: document.id,
@@ -99,6 +102,8 @@ export async function listWorkOrdersForDate(date: string): Promise<StoredWorkOrd
       confidence: data.confidence,
       status: (data.status as StoredWorkOrder['status']) || 'unscheduled',
       selectedTime: data.selectedTime,
+      callSummary: data.callSummary || '',
+      source: data.source || '',
     };
   });
 }
@@ -226,6 +231,188 @@ export async function getDispatchPlan(date: string): Promise<DispatchPlan> {
     snap.exists() ? (snap.data() as Record<string, unknown>) : undefined
   );
   return mergeWorkOrdersIntoPlan(plan, workOrders);
+}
+
+const SCHEDULING_REQUESTS_COLLECTION = 'schedulingRequests';
+
+export interface DaySchedulingJob {
+  workOrder: StoredWorkOrder;
+  dispatchLane: 'truck' | 'unassigned' | 'not_ready' | 'none';
+  truckName?: string;
+  windowLabel?: string;
+  morningTextStatus?: string;
+  voiceConfirmationResponse?: string;
+  voiceConfirmationDetails?: string;
+  scheduleTruckName?: string;
+  scheduleTime?: string;
+  schedulingStatus?: string;
+  availableTimeSlots?: string[];
+}
+
+export interface DaySchedulingInfo {
+  date: string;
+  jobs: DaySchedulingJob[];
+  assignedCount: number;
+  unassignedCount: number;
+  notReadyCount: number;
+}
+
+async function loadWorkOrdersByIds(ids: string[]): Promise<StoredWorkOrder[]> {
+  const unique = [...new Set(ids.filter(Boolean))];
+  const loaded: Array<StoredWorkOrder | null> = await Promise.all(
+    unique.map(async (id) => {
+      const snap = await getDoc(doc(db, WORK_ORDERS_COLLECTION, id));
+      if (!snap.exists()) return null;
+      const data = snap.data() as WorkOrder & {
+        status?: string;
+        selectedTime?: string;
+        callSummary?: string;
+        source?: string;
+      };
+      const workOrder: StoredWorkOrder = {
+        id: snap.id,
+        workOrderNumber: data.workOrderNumber || '',
+        customerName: data.customerName || '',
+        phone: data.phone || '',
+        address: data.address || '',
+        jobType: data.jobType || '',
+        appointmentDate: data.appointmentDate || '',
+        appointmentTime: data.appointmentTime || '',
+        notes: data.notes || '',
+        sourceFileName: data.sourceFileName || '',
+        smsConsent: data.smsConsent === true,
+        confidence: data.confidence,
+        status: (data.status as StoredWorkOrder['status']) || 'unscheduled',
+        selectedTime: data.selectedTime,
+        callSummary: data.callSummary || '',
+        source: data.source || '',
+      };
+      return workOrder;
+    })
+  );
+  return loaded.filter((item): item is StoredWorkOrder => item !== null);
+}
+
+export async function getDaySchedulingInfo(
+  date: string,
+  extraWorkOrderIds: string[] = []
+): Promise<DaySchedulingInfo> {
+  const [datedOrders, plan, schedule, requestSnap] = await Promise.all([
+    listWorkOrdersForDate(date),
+    getDispatchPlan(date),
+    getSchedule(date),
+    getDocs(query(collection(db, SCHEDULING_REQUESTS_COLLECTION), where('date', '==', date))).catch(
+      () => ({ docs: [] as { id: string; data: () => Record<string, unknown> }[] })
+    ),
+  ]);
+
+  const byId = new Map(datedOrders.map((order) => [order.id, order]));
+  const missingIds = extraWorkOrderIds.filter((id) => id && !byId.has(id));
+  for (const extra of await loadWorkOrdersByIds(missingIds)) {
+    byId.set(extra.id, extra);
+  }
+
+  const requestsByWorkOrder = new Map<
+    string,
+    { status?: string; availableTimeSlots?: string[] }
+  >();
+  for (const document of requestSnap.docs) {
+    const data = document.data() as {
+      workOrderId?: string;
+      status?: string;
+      availableTimeSlots?: string[];
+    };
+    const workOrderId = data.workOrderId || document.id;
+    requestsByWorkOrder.set(workOrderId, {
+      status: data.status,
+      availableTimeSlots: Array.isArray(data.availableTimeSlots)
+        ? data.availableTimeSlots
+        : [],
+    });
+  }
+
+  for (const id of byId.keys()) {
+    if (requestsByWorkOrder.has(id)) continue;
+    const extraRequest = await getDoc(doc(db, SCHEDULING_REQUESTS_COLLECTION, id));
+    if (!extraRequest.exists()) continue;
+    const data = extraRequest.data() as {
+      status?: string;
+      availableTimeSlots?: string[];
+    };
+    requestsByWorkOrder.set(id, {
+      status: data.status,
+      availableTimeSlots: Array.isArray(data.availableTimeSlots)
+        ? data.availableTimeSlots
+        : [],
+    });
+  }
+
+  const jobs: DaySchedulingJob[] = [...byId.values()]
+    .sort((left, right) =>
+      `${left.appointmentTime}-${left.workOrderNumber}`.localeCompare(
+        `${right.appointmentTime}-${right.workOrderNumber}`
+      )
+    )
+    .map((workOrder) => {
+      let dispatchLane: DaySchedulingJob['dispatchLane'] = 'none';
+      let truckName: string | undefined;
+      let matchedStop: DispatchStop | undefined;
+      for (const truck of plan.trucks) {
+        const stop = truck.stops.find((item) => item.workOrderId === workOrder.id);
+        if (stop) {
+          dispatchLane = 'truck';
+          truckName = truck.name;
+          matchedStop = stop;
+          break;
+        }
+      }
+      if (!matchedStop) {
+        matchedStop = plan.unassigned.find((item) => item.workOrderId === workOrder.id);
+        if (matchedStop) dispatchLane = 'unassigned';
+      }
+      if (!matchedStop) {
+        matchedStop = plan.notReady.find((item) => item.workOrderId === workOrder.id);
+        if (matchedStop) dispatchLane = 'not_ready';
+      }
+
+      let scheduleTruckName: string | undefined;
+      let scheduleTime: string | undefined;
+      for (const truck of schedule?.trucks || []) {
+        const stop = truck.stops.find(
+          (item) =>
+            item.workOrderNumber === workOrder.workOrderNumber ||
+            item.id === workOrder.id
+        );
+        if (stop) {
+          scheduleTruckName = truck.name;
+          scheduleTime = stop.time;
+          break;
+        }
+      }
+
+      const request = requestsByWorkOrder.get(workOrder.id);
+      return {
+        workOrder,
+        dispatchLane,
+        truckName,
+        windowLabel: matchedStop ? formatWindowLabel(matchedStop.window) : undefined,
+        morningTextStatus: matchedStop?.morningTextStatus,
+        voiceConfirmationResponse: matchedStop?.voiceConfirmationResponse,
+        voiceConfirmationDetails: matchedStop?.voiceConfirmationDetails,
+        scheduleTruckName,
+        scheduleTime,
+        schedulingStatus: request?.status,
+        availableTimeSlots: request?.availableTimeSlots,
+      };
+    });
+
+  return {
+    date,
+    jobs,
+    assignedCount: plan.trucks.reduce((count, truck) => count + truck.stops.length, 0),
+    unassignedCount: plan.unassigned.length,
+    notReadyCount: plan.notReady.length,
+  };
 }
 
 export interface DispatchDaySummary {
