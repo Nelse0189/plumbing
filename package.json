@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "firebase:login": "npx firebase-tools login --no-localhost",
     "deploy": "npm run build && npx firebase-tools deploy",
     "deploy:hosting": "npm run build && npx firebase-tools deploy --only hosting",
     "deploy:functions": "npx firebase-tools deploy --only functions"
