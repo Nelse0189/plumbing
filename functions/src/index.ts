@@ -31,8 +31,17 @@ admin.initializeApp();
  */
 const strOpenAiApiKey = defineString("OPENAI_API_KEY", { default: "" });
 const strOpenAiModel = defineString("OPENAI_MODEL", {
-  default: "gpt-5.6-luna",
+  default: "gpt-4o-mini",
 });
+
+function openAiChatModel(): string {
+  const configured = asTrimmedString(strOpenAiModel.value()).replace(/\s+/g, "-");
+  if (/^(gpt-4o|gpt-4\.|gpt-4-|gpt-3\.5|o[1-4])/i.test(configured)) {
+    return configured;
+  }
+  return "gpt-4o-mini";
+}
+
 const strTwilioAuthToken = defineString("TWILIO_AUTH_TOKEN", { default: "" });
 const strGmailClientSecret = defineString("GMAIL_CLIENT_SECRET", { default: "" });
 const strGmailRefreshToken = defineString("GMAIL_REFRESH_TOKEN", { default: "" });
@@ -212,7 +221,7 @@ async function extractBackgroundWorkOrder(
   const result = await new OpenAI({
     apiKey: strOpenAiApiKey.value(),
   }).chat.completions.create({
-    model: strOpenAiModel.value(),
+    model: openAiChatModel(),
     messages: [
       { role: "system", content: workOrderExtractionInstructions },
       {
@@ -422,7 +431,7 @@ export const extractWorkOrder = onCall(
 
     try {
       const result = await openAi.chat.completions.create({
-        model: strOpenAiModel.value(),
+        model: openAiChatModel(),
         messages: [
           {
             role: "system",
@@ -668,7 +677,7 @@ export const importChannelPdfWorkOrder = onCall(
     let extracted: WorkOrderRecord;
     try {
       const result = await openAi.chat.completions.create({
-        model: strOpenAiModel.value(),
+        model: openAiChatModel(),
         messages: [
           {
             role: "system",
@@ -1980,7 +1989,7 @@ async function analyzeCallTranscript(
   const response = await new OpenAI({
     apiKey: strOpenAiApiKey.value(),
   }).chat.completions.create({
-    model: strOpenAiModel.value(),
+    model: openAiChatModel(),
     messages: [
       {
         role: "system",
@@ -2191,7 +2200,10 @@ async function ingestPlaudCallRecord(input: {
       },
       { merge: true }
     );
-    throw error;
+    throw new HttpsError(
+      "failed-precondition",
+      error instanceof Error ? error.message : String(error)
+    );
   }
 }
 
@@ -2875,7 +2887,7 @@ export const askPlaudCalls = onCall({ cors: true, timeoutSeconds: 120 }, async (
     throw new HttpsError("failed-precondition", "OPENAI_API_KEY is not configured");
   }
   const response = await new OpenAI({ apiKey: strOpenAiApiKey.value() }).chat.completions.create({
-    model: strOpenAiModel.value(),
+    model: openAiChatModel(),
     messages: [
       {
         role: "system",
@@ -3144,7 +3156,7 @@ async function parseSchedulingReply(
   const result = await new OpenAI({
     apiKey: strOpenAiApiKey.value(),
   }).chat.completions.create({
-    model: strOpenAiModel.value(),
+    model: openAiChatModel(),
     messages: [
       {
         role: "system",
