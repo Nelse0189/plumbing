@@ -9,6 +9,7 @@ import {
 } from '@react-google-maps/api';
 import type { Stop, Truck } from '../types';
 import { DEFAULT_DISPATCH_ORIGIN } from '../utils/dispatchWindows';
+import { resolveGoogleMapsApiKey } from '../utils/mapsKey';
 
 interface MapViewProps {
   trucks: Truck[];
@@ -33,10 +34,24 @@ interface SelectedMapStop {
 }
 
 export default function MapView({ trucks, selectedDate }: MapViewProps) {
+  const [apiKey, setApiKey] = useState('');
+  const [keyStatus, setKeyStatus] = useState<'loading' | 'ready' | 'missing'>('loading');
   const [directions, setDirections] = useState<
     Record<string, google.maps.DirectionsResult>
   >({});
   const [selectedStop, setSelectedStop] = useState<SelectedMapStop | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void resolveGoogleMapsApiKey().then((key) => {
+      if (cancelled) return;
+      setApiKey(key);
+      setKeyStatus(key ? 'ready' : 'missing');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const allStops = useMemo(() => {
     return trucks.flatMap(truck =>
@@ -88,9 +103,18 @@ export default function MapView({ trucks, selectedDate }: MapViewProps) {
     setSelectedStop(null);
   }, [routeKey]);
 
-  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+  if (keyStatus === 'loading') {
+    return (
+      <div style={{ padding: '2rem', maxWidth: '1200px', margin: '0 auto' }}>
+        <h2 style={{ marginBottom: '1rem', color: 'var(--accent)' }}>
+          Map View - {selectedDate}
+        </h2>
+        <p style={{ color: 'var(--text-secondary)' }}>Loading map…</p>
+      </div>
+    );
+  }
 
-  if (!apiKey) {
+  if (keyStatus === 'missing' || !apiKey) {
     return (
       <div style={{ padding: '2rem', maxWidth: '1200px', margin: '0 auto' }}>
         <h2 style={{ marginBottom: '1rem', color: 'var(--accent)' }}>
@@ -105,7 +129,11 @@ export default function MapView({ trucks, selectedDate }: MapViewProps) {
         }}>
           <p style={{ marginBottom: '1rem' }}>Google Maps API key not configured</p>
           <p style={{ fontSize: '0.85rem' }}>
-            Please add VITE_GOOGLE_MAPS_API_KEY to your .env file
+            The last hosting deploy rebuilt the site without the laptop <code>.env</code> file,
+            so the Map key was not included. Add <code>GOOGLE_MAPS_API_KEY</code> to
+            {' '}<code>functions/.env.nj-plumbing</code> and redeploy functions, or save it on
+            Firestore document <code>appConfig/public</code> as <code>googleMapsApiKey</code>,
+            then refresh.
           </p>
         </div>
       </div>

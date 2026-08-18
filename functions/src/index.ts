@@ -36,6 +36,7 @@ const strOpenAiModel = defineString("OPENAI_MODEL", {
 
 const OPENAI_CHAT_FALLBACK = "gpt-5.6-sol";
 const OPENAI_CALL_ANALYSIS_MODEL = "gpt-5.6-sol";
+const strGoogleMapsApiKey = defineString("GOOGLE_MAPS_API_KEY", { default: "" });
 
 function openAiChatModel(): string {
   const raw =
@@ -3616,6 +3617,13 @@ async function syncPlaudRecordings(options: {
     results,
   };
 }
+
+export const getPublicAppConfig = onCall({ cors: true }, async () => ({
+  googleMapsApiKey:
+    asTrimmedString(strGoogleMapsApiKey.value()) ||
+    asTrimmedString(process.env.GOOGLE_MAPS_API_KEY) ||
+    asTrimmedString(process.env.VITE_GOOGLE_MAPS_API_KEY),
+}));
 
 export const getPlaudConnection = onCall({ cors: true }, async () => {
   try {
