@@ -3618,12 +3618,26 @@ async function syncPlaudRecordings(options: {
   };
 }
 
-export const getPublicAppConfig = onCall({ cors: true }, async () => ({
-  googleMapsApiKey:
+export const getPublicAppConfig = onCall({ cors: true }, async () => {
+  const googleMapsApiKey =
     asTrimmedString(strGoogleMapsApiKey.value()) ||
     asTrimmedString(process.env.GOOGLE_MAPS_API_KEY) ||
-    asTrimmedString(process.env.VITE_GOOGLE_MAPS_API_KEY),
-}));
+    asTrimmedString(process.env.VITE_GOOGLE_MAPS_API_KEY);
+  if (googleMapsApiKey) {
+    const ref = admin.firestore().collection("appConfig").doc("public");
+    const existing = await ref.get();
+    if (!asTrimmedString(existing.data()?.googleMapsApiKey)) {
+      await ref.set(
+        {
+          googleMapsApiKey,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+  }
+  return { googleMapsApiKey };
+});
 
 export const getPlaudConnection = onCall({ cors: true }, async () => {
   try {
