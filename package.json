@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "setup:env": "bash scripts/setup-local-env.sh",
+    "setup:env:win": "powershell -ExecutionPolicy Bypass -File scripts/setup-local-env.ps1",
     "firebase:login": "npx firebase-tools login --no-localhost",
     "deploy": "npm run build && npx firebase-tools deploy",
     "deploy:hosting": "npm run build && npx firebase-tools deploy --only hosting",
