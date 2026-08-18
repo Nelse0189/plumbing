@@ -3,6 +3,7 @@ lib/
 .env
 .env.*
 !.env.example
+!.env.*.example
 
 
 
