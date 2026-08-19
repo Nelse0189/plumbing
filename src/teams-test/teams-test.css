@@ -559,6 +559,13 @@
   overflow: auto;
 }
 
+.teams-test__notes-modal-panel mark.schedule-date-mark {
+  background: var(--accent);
+  color: var(--bg-primary);
+  padding: 0 0.15em;
+  border-radius: 2px;
+}
+
 .teams-test__work-order {
   margin-bottom: 1rem;
   padding: 1rem;

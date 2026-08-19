@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { PlaudCall, PlaudConnection, PlaudSyncSummary } from '../types';
+import type { PlaudCall, PlaudConnection, PlaudSyncSummary, StoredWorkOrder } from '../types';
 import {
   askPlaudCalls,
   connectPlaudWebSession,
@@ -11,19 +11,24 @@ import {
   processPlaudCalls,
   syncPlaudCalls,
 } from '../services/plaudService';
+import { beginPlaudOAuth, formatPlaudCallableError } from '../plaudOAuth';
+import { isPlaudDesktop, signInWithPlaudDesktop } from '../plaudDesktop';
 import {
   PLAUD_CONNECT_SOURCE,
   consumePlaudConnectToken,
   isAllowedPlaudConnectOrigin,
-  openPlaudConnectWindow,
-  plaudConnectBookmarkletHref,
+  stopPlaudSignInWatcher,
 } from '../plaudConnect';
 import {
+  findWorkOrderForCall,
   getDaySchedulingInfo,
   type DaySchedulingInfo,
   type DaySchedulingJob,
 } from '../services/dispatchService';
+import { formatUsd } from '../services/importProgressService';
+import NotesWithScheduleHighlight from './NotesWithScheduleHighlight';
 import './CallIntake.css';
+import './DispatchBoard.css';
 
 function addDaysToIsoDate(isoDate: string, days: number): string {
   const [year, month, day] = isoDate.split('-').map(Number);
@@ -185,6 +190,29 @@ function workOrderNumberForCall(call: PlaudCall): string {
     extractWorkOrderNumberFromText(call.summary || '') ||
     extractWorkOrderNumberFromText(call.recordingName || '')
   );
+}
+
+function callHasLinkedWorkOrder(call: PlaudCall): boolean {
+  return Boolean(call.workOrderId || workOrderNumberForCall(call));
+}
+
+function workOrderFromCall(call: PlaudCall): StoredWorkOrder {
+  return {
+    id: call.workOrderId || call.id,
+    workOrderNumber: workOrderNumberForCall(call),
+    customerName: call.customerName || '',
+    phone: call.phone || call.callerPhone || '',
+    address: call.address || '',
+    jobType: '',
+    appointmentDate: appointmentDateForCall(call),
+    appointmentTime: call.appointmentTime || '',
+    notes: call.summary || '',
+    sourceFileName: call.recordingName || '',
+    smsConsent: false,
+    status: call.status === 'processed' ? 'unscheduled' : 'needs_review',
+    callSummary: call.summary,
+    source: 'plaud_call',
+  };
 }
 
 function appointmentDateForCall(call: PlaudCall): string {
@@ -411,6 +439,10 @@ function CallSummaryBody({ call }: { call: PlaudCall }) {
           <dd>{workOrderNumberForCall(call) || '—'}</dd>
         </div>
         <div>
+          <dt>OpenAI</dt>
+          <dd>{call.costUsd != null ? formatUsd(call.costUsd) : '—'}</dd>
+        </div>
+        <div>
           <dt>Phone</dt>
           <dd>{call.callerPhone || '—'}</dd>
         </div>
@@ -460,6 +492,80 @@ function CallSummaryBody({ call }: { call: PlaudCall }) {
         </details>
       ) : null}
     </div>
+  );
+}
+
+function WorkOrderDetailsModal({
+  order,
+  onClose,
+}: {
+  order: StoredWorkOrder;
+  onClose: () => void;
+}) {
+  const hasNotes = Boolean(order.notes?.trim());
+  return createPortal(
+    <div
+      className="dispatch-details-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Work order ${order.workOrderNumber || order.customerName || 'details'}`}
+    >
+      <div className="dispatch-details-modal__backdrop" onClick={onClose} />
+      <div className="dispatch-details-modal__panel">
+        <header className="dispatch-details-modal__header">
+          <div>
+            <strong>{order.workOrderNumber || 'No WO#'}</strong>
+            <p>{order.customerName || 'Unknown customer'}</p>
+          </div>
+          <button type="button" onClick={onClose}>
+            Close
+          </button>
+        </header>
+        <dl className="dispatch-details-modal__facts">
+          <div>
+            <dt>Phone</dt>
+            <dd>{order.phone || '—'}</dd>
+          </div>
+          <div>
+            <dt>Address</dt>
+            <dd>{order.address || '—'}</dd>
+          </div>
+          <div>
+            <dt>Job type</dt>
+            <dd>{order.jobType || '—'}</dd>
+          </div>
+          <div>
+            <dt>Appointment</dt>
+            <dd>
+              {order.appointmentDate
+                ? `${order.appointmentDate}${order.appointmentTime ? ` · ${order.appointmentTime}` : ''}`
+                : '—'}
+            </dd>
+          </div>
+          <div>
+            <dt>Status</dt>
+            <dd>{order.status.replace('_', ' ')}</dd>
+          </div>
+          <div>
+            <dt>Source</dt>
+            <dd>{order.source || order.sourceFileName || '—'}</dd>
+          </div>
+        </dl>
+        <section className="dispatch-details-modal__notes">
+          <h3>Notes</h3>
+          {hasNotes ? (
+            <NotesWithScheduleHighlight
+              notes={order.notes || ''}
+              scheduleDate={order.appointmentDate}
+              evidenceQuote={order.scheduleEvidenceQuote}
+            />
+          ) : (
+            <p className="dispatch-details-modal__empty">No notes on this work order yet.</p>
+          )}
+        </section>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -558,7 +664,12 @@ function SchedulingJobCard({ job }: { job: DaySchedulingJob }) {
       <section>
         <h3>Notes</h3>
         {order.notes ? (
-          <pre className="call-intake__transcript">{order.notes}</pre>
+          <NotesWithScheduleHighlight
+            notes={order.notes}
+            scheduleDate={order.appointmentDate}
+            evidenceQuote={order.scheduleEvidenceQuote}
+            className="call-intake__transcript"
+          />
         ) : (
           <p className="call-intake__empty">No notes on this work order.</p>
         )}
@@ -586,9 +697,13 @@ function TranscriptWithEvidence({ call }: { call: PlaudCall }) {
 export default function CallIntake({
   selectedDate,
   onSelectDate,
+  oauthNotice = '',
+  oauthFailed = false,
 }: {
   selectedDate: string;
   onSelectDate: (date: string) => void;
+  oauthNotice?: string;
+  oauthFailed?: boolean;
 }) {
   const [calls, setCalls] = useState<PlaudCall[]>([]);
   const [connection, setConnection] = useState<PlaudConnection | null>(null);
@@ -613,13 +728,15 @@ export default function CallIntake({
   const [webToken, setWebToken] = useState('');
   const [webApiBase, setWebApiBase] = useState('https://api.plaud.ai');
   const [showReconnect, setShowReconnect] = useState(false);
-  const [connectHint, setConnectHint] = useState('');
+  const [connectHint, setConnectHint] = useState(oauthNotice && !oauthFailed ? oauthNotice : '');
   const [error, setError] = useState<string | null>(null);
   const [processingCallId, setProcessingCallId] = useState<string | null>(null);
   const [processingAll, setProcessingAll] = useState(false);
   const [processProgress, setProcessProgress] = useState('');
   const [summaryCall, setSummaryCall] = useState<PlaudCall | null>(null);
   const [summaryCalls, setSummaryCalls] = useState<PlaudCall[] | null>(null);
+  const [detailsWorkOrder, setDetailsWorkOrder] = useState<StoredWorkOrder | null>(null);
+  const [loadingWorkOrderId, setLoadingWorkOrderId] = useState<string | null>(null);
   const [dayJobs, setDayJobs] = useState<DaySchedulingInfo | null>(null);
   const [loadingDayJobs, setLoadingDayJobs] = useState(false);
   const connectingRef = useRef(false);
@@ -658,6 +775,7 @@ export default function CallIntake({
       setWebToken('');
       setShowReconnect(false);
       setConnectHint('Plaud is connected. You can close the Plaud window.');
+      stopPlaudSignInWatcher();
       await reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -674,6 +792,7 @@ export default function CallIntake({
     void reload();
     const incoming = consumePlaudConnectToken();
     if (incoming) void connectWithToken(incoming);
+    if (oauthFailed && oauthNotice) setError(oauthNotice);
     // Load the full library once; day chips filter it locally.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -687,7 +806,10 @@ export default function CallIntake({
       if (token) void connectWithToken(token);
     };
     window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
+    return () => {
+      window.removeEventListener('message', onMessage);
+      stopPlaudSignInWatcher();
+    };
   }, [connectWithToken]);
 
   const visibleCalls = useMemo(() => {
@@ -751,18 +873,25 @@ export default function CallIntake({
   const runServerProcessJob = async (input: { allTime?: boolean; date?: string }) => {
     let pass = 0;
     let last: PlaudSyncSummary | null = null;
+    let billed = 0;
     do {
       pass += 1;
       setProcessProgress(
         last?.remaining
-          ? `Saved ${last.saved || 0} to Firebase, ${last.remaining} left (pass ${pass})…`
+          ? `Saved ${last.saved || 0} to Firebase, ${last.remaining} left (pass ${pass})… OpenAI ${formatUsd(billed)}`
           : `Processing calls on the server and saving to Firebase (pass ${pass})…`
       );
       last = await processPlaudCalls(input);
-      setSyncSummary(last);
+      billed = Math.round((billed + (last.costUsd || 0)) * 1e6) / 1e6;
+      setSyncSummary({ ...last, costUsd: billed });
+      setProcessProgress(
+        `Saved ${last.saved || 0} to Firebase${
+          last.remaining ? `, ${last.remaining} left` : ''
+        } (pass ${pass})… OpenAI ${formatUsd(billed)}`
+      );
       await reload();
     } while (Boolean(last.incomplete) && (last.remaining || 0) > 0 && pass < 20);
-    return last;
+    return last ? { ...last, costUsd: billed } : last;
   };
 
   const handleProcessVisibleCalls = async () => {
@@ -804,6 +933,23 @@ export default function CallIntake({
     }
   };
 
+  const handleShowWorkOrder = async (call: PlaudCall) => {
+    setLoadingWorkOrderId(call.id);
+    setError(null);
+    try {
+      const loaded = await findWorkOrderForCall({
+        workOrderId: call.workOrderId,
+        workOrderNumber: workOrderNumberForCall(call),
+      });
+      setDetailsWorkOrder(loaded || workOrderFromCall(call));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setDetailsWorkOrder(workOrderFromCall(call));
+    } finally {
+      setLoadingWorkOrderId(null);
+    }
+  };
+
   const handleShowDayWorkOrders = async () => {
     setLoadingDayJobs(true);
     setError(null);
@@ -836,7 +982,7 @@ export default function CallIntake({
           <p className={`call-intake__connection ${connection?.connected ? 'is-connected' : 'is-disconnected'}`}>
             {connection?.connected
               ? `Connected to Plaud${connection.mode === 'web' ? ' via web.plaud.ai' : ''}${connection.name || connection.email ? ` · ${connection.name || connection.email}` : ''}${connection.tokenType ? ` · ${connection.tokenType}` : ''}${connection.apiBase ? ` · ${connection.apiBase.replace(/^https:\/\//, '')}` : ''}${typeof connection.libraryCount === 'number' ? ` · ${connection.libraryCount} in Plaud` : ''}`
-              : 'Plaud is not connected. Open a Plaud window, sign in, then send that session back with the bookmark below.'}
+              : 'Plaud is not connected. Click Sign in with Plaud below.'}
           </p>
         </div>
         <div className="call-intake__actions">
@@ -984,74 +1130,48 @@ export default function CallIntake({
         <section className="call-intake__mock">
           <h3>Connect Plaud</h3>
           <p>
-            This site cannot read a hidden Plaud tab. Browsers block that. The
-            reliable way is to open Plaud in its own window, sign in as usual,
-            then send that login here with one click.
+            {isPlaudDesktop()
+              ? 'Click the button and sign in to Plaud in the window that opens. This desktop app can read that login and connect automatically.'
+              : 'For a one-click Plaud login, open this app with npm run desktop. The browser cannot read a Plaud window by itself.'}
           </p>
-          <ol className="call-intake__steps">
-            <li>
-              Drag{' '}
-              <a
-                className="call-intake__bookmarklet"
-                href={plaudConnectBookmarkletHref()}
-                onClick={(event) => {
-                  event.preventDefault();
-                  setConnectHint(
-                    'Drag “Send to NJ Plumbing” onto your bookmarks bar. Then click that bookmark while the Plaud window is open.'
-                  );
-                }}
-              >
-                Send to NJ Plumbing
-              </a>{' '}
-              onto your bookmarks bar (one time).
-            </li>
-            <li>Click Open Plaud window and sign in if asked.</li>
-            <li>
-              When you can see your recordings, click the{' '}
-              <strong>Send to NJ Plumbing</strong> bookmark. The Plaud window
-              sends the session back here.
-            </li>
-          </ol>
           <div className="call-intake__connect-actions">
             <button
               type="button"
               className="call-intake__primary"
               disabled={connecting}
               onClick={() => {
-                const popup = openPlaudConnectWindow();
-                setConnectHint(
-                  popup
-                    ? 'Sign in in the Plaud window, then click the Send to NJ Plumbing bookmark while that window is focused.'
-                    : 'The browser blocked the Plaud popup. Allow popups, or open web.plaud.ai yourself and click the bookmark there.'
-                );
+                void (async () => {
+                  setError(null);
+                  setConnectHint(
+                    isPlaudDesktop()
+                      ? 'Sign in in the Plaud window…'
+                      : 'Opening Plaud…'
+                  );
+                  try {
+                    if (isPlaudDesktop()) {
+                      const token = await signInWithPlaudDesktop();
+                      await connectWithToken(token);
+                      return;
+                    }
+                    const url = await beginPlaudOAuth();
+                    window.location.assign(url);
+                  } catch (err) {
+                    setConnectHint('');
+                    setError(formatPlaudCallableError(err));
+                  }
+                })();
               }}
             >
-              Open Plaud window
+              Sign in with Plaud
             </button>
             {showReconnect && connection?.connected ? (
               <button type="button" onClick={() => setShowReconnect(false)}>
                 Cancel
               </button>
             ) : null}
-            <a
-              className="call-intake__bookmarklet"
-              href={plaudConnectBookmarkletHref()}
-              onClick={(event) => {
-                event.preventDefault();
-                setConnectHint(
-                  'That button has to run on web.plaud.ai. Drag it to your bookmarks bar, then click it in the Plaud window.'
-                );
-              }}
-            >
-              Send to NJ Plumbing
-            </a>
           </div>
           {connectHint ? <p className="call-intake__sync">{connectHint}</p> : null}
-          <p className="call-intake__sync">
-            {connecting
-              ? 'Connecting…'
-              : 'If the bookmark cannot find a token, click any recording in Plaud and try once more.'}
-          </p>
+          {connecting ? <p className="call-intake__sync">Connecting…</p> : null}
           <details className="call-intake__manual-connect">
             <summary>Paste a token instead</summary>
             <p>
@@ -1113,6 +1233,7 @@ export default function CallIntake({
           {syncSummary.incomplete && (syncSummary.remaining || 0) > 0
             ? ` · ${syncSummary.remaining} still queued`
             : '.'}
+          {syncSummary.costUsd != null ? ` OpenAI ${formatUsd(syncSummary.costUsd)}.` : ''}
         </p>
       )}
 
@@ -1209,6 +1330,15 @@ export default function CallIntake({
                 >
                   {processingCallId === call.id ? 'Opening…' : 'Summary'}
                 </button>
+                {callHasLinkedWorkOrder(call) ? (
+                  <button
+                    type="button"
+                    disabled={processingAll || loadingWorkOrderId !== null}
+                    onClick={() => void handleShowWorkOrder(call)}
+                  >
+                    {loadingWorkOrderId === call.id ? 'Opening…' : 'Work order'}
+                  </button>
+                ) : null}
               </span>
             </header>
             {call.summary && <p>{call.summary}</p>}
@@ -1220,12 +1350,16 @@ export default function CallIntake({
                 {workOrderNumberForCall(call) ? (
                   <span>Work order: {workOrderNumberForCall(call)}</span>
                 ) : null}
+                {call.costUsd != null ? <span>OpenAI {formatUsd(call.costUsd)}</span> : null}
               </p>
             ) : call.appointmentMade ? (
               <p className="call-intake__appointment">
                 Water-heater appointment detected
                 {workOrderNumberForCall(call) ? ` · Work order: ${workOrderNumberForCall(call)}` : ''}
+                {call.costUsd != null ? ` · OpenAI ${formatUsd(call.costUsd)}` : ''}
               </p>
+            ) : call.costUsd != null ? (
+              <p className="call-intake__appointment">OpenAI {formatUsd(call.costUsd)}</p>
             ) : null}
             {reviewReasonsForCall(call).length > 0 && (
               <div className="call-intake__review">
@@ -1360,6 +1494,17 @@ export default function CallIntake({
           onClose={() => setSummaryCall(null)}
         >
           <CallSummaryBody call={summaryCall} />
+          {callHasLinkedWorkOrder(summaryCall) ? (
+            <p className="call-intake__call-actions">
+              <button
+                type="button"
+                disabled={loadingWorkOrderId !== null}
+                onClick={() => void handleShowWorkOrder(summaryCall)}
+              >
+                {loadingWorkOrderId === summaryCall.id ? 'Opening…' : 'Work order'}
+              </button>
+            </p>
+          ) : null}
         </Modal>
       ) : null}
 
@@ -1396,6 +1541,13 @@ export default function CallIntake({
             </div>
           )}
         </Modal>
+      ) : null}
+
+      {detailsWorkOrder ? (
+        <WorkOrderDetailsModal
+          order={detailsWorkOrder}
+          onClose={() => setDetailsWorkOrder(null)}
+        />
       ) : null}
 
       {dayJobs ? (

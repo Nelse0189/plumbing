@@ -4,7 +4,7 @@ import { firebaseConfig } from '../firebase/config';
 import type { StoredWorkOrder, WorkOrder } from '../types';
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-const functions = getFunctions(app);
+const functions = getFunctions(app, 'us-central1');
 
 export async function extractWorkOrder(
   text: string,
@@ -111,6 +111,43 @@ export async function listWorkOrders(
     microsoftAccessToken,
     ...(channelId ? { channelId } : {}),
   });
+  return result.data;
+}
+
+export async function detectWorkOrderSchedules(): Promise<{
+  scanned: number;
+  booked: number;
+  skipped: number;
+  costUsd: number;
+}> {
+  const callable = httpsCallable<
+    Record<string, never>,
+    { scanned: number; booked: number; skipped: number; costUsd: number }
+  >(functions, 'detectWorkOrderSchedules', { timeout: 540000 });
+  const result = await callable({});
+  return result.data;
+}
+
+export async function reinterpretWorkOrderSchedules(
+  _microsoftAccessToken?: string
+): Promise<{
+  scanned: number;
+  booked: number;
+  skipped: number;
+  unscheduled: number;
+  costUsd: number;
+}> {
+  const callable = httpsCallable<
+    Record<string, never>,
+    {
+      scanned: number;
+      booked: number;
+      skipped: number;
+      unscheduled: number;
+      costUsd: number;
+    }
+  >(functions, 'reinterpretWorkOrderSchedules', { timeout: 540000 });
+  const result = await callable({});
   return result.data;
 }
 

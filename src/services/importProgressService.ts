@@ -25,7 +25,21 @@ export interface WorkOrderImportProgress {
   cached: number;
   failed: number;
   message?: string;
+  pdfCostUsd?: number;
+  scheduleCostUsd?: number;
+  openaiCostUsd?: number;
   updatedAt?: string;
+}
+
+export function formatUsd(amount?: number): string {
+  const value = typeof amount === 'number' && Number.isFinite(amount) ? amount : 0;
+  if (value <= 0) return '$0.00';
+  if (value < 0.01) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(2)}`;
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 function serializeProgress(
@@ -50,6 +64,9 @@ function serializeProgress(
     cached: typeof data.cached === 'number' ? data.cached : 0,
     failed: typeof data.failed === 'number' ? data.failed : 0,
     message: typeof data.message === 'string' ? data.message : undefined,
+    pdfCostUsd: asNumber(data.pdfCostUsd),
+    scheduleCostUsd: asNumber(data.scheduleCostUsd),
+    openaiCostUsd: asNumber(data.openaiCostUsd),
     updatedAt: updatedAt?.toDate?.().toISOString(),
   };
 }

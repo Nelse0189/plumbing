@@ -47,6 +47,7 @@ export interface GraphChat {
 export interface GraphMessage {
   id: string;
   createdDateTime: string;
+  lastModifiedDateTime?: string;
   subject?: string;
   from?: {
     user?: {
@@ -120,7 +121,19 @@ export async function getChannelMessages(teamId: string, channelId: string) {
   return { value: await addRepliesToMessages(teamId, channelId, response.value) };
 }
 
-/** Loads posts created in the specified trailing window, up to 500 posts. */
+function teamsThreadActivityMs(message: {
+  createdDateTime?: string;
+  lastModifiedDateTime?: string;
+}): number {
+  const modified = Date.parse(message.lastModifiedDateTime || '');
+  const created = Date.parse(message.createdDateTime || '');
+  return Math.max(
+    Number.isFinite(modified) ? modified : 0,
+    Number.isFinite(created) ? created : 0
+  );
+}
+
+/** Loads recently active posts (new PDFs or old PDFs with new replies), up to 500 posts. */
 export async function getChannelMessagesSince(
   teamId: string,
   channelId: string,
@@ -139,14 +152,20 @@ export async function getChannelMessagesSince(
       ListResponse<GraphMessage>
     >(nextPage);
     pagesRead += 1;
-    for (const message of page.value) {
-      const createdAt = new Date(message.createdDateTime).getTime();
-      if (Number.isFinite(createdAt) && createdAt >= cutoff && !seen.has(message.id)) {
+    const pageItems = page.value || [];
+    let pageHasRecent = false;
+    for (const message of pageItems) {
+      const activityAt = teamsThreadActivityMs(message);
+      if (activityAt >= cutoff) pageHasRecent = true;
+      if (activityAt >= cutoff && !seen.has(message.id)) {
         seen.add(message.id);
         posts.push(message);
       }
     }
     nextPage = page['@odata.nextLink'];
+    if (pageItems.length > 0 && !pageHasRecent) {
+      nextPage = undefined;
+    }
   }
 
   return {

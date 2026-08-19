@@ -4,7 +4,24 @@ import { firebaseConfig } from '../firebase/config';
 import type { PlaudCall, PlaudConnection, PlaudSyncSummary } from '../types';
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-const functions = getFunctions(app);
+const functions = getFunctions(app, 'us-central1');
+
+export async function startPlaudOAuth(origin = window.location.origin): Promise<{ url: string }> {
+  const call = httpsCallable<{ origin: string }, { url: string }>(functions, 'startPlaudOAuth');
+  const result = await call({ origin });
+  return result.data;
+}
+
+export async function finishPlaudOAuth(input: {
+  code: string;
+  state: string;
+  verifier?: string;
+  redirectUri?: string;
+}): Promise<{ connected: boolean }> {
+  const call = httpsCallable<typeof input, { connected: boolean }>(functions, 'finishPlaudOAuth');
+  const result = await call(input);
+  return result.data;
+}
 
 export async function connectPlaudWebSession(input: {
   token: string;

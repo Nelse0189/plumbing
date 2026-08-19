@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState, type DragEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { createPortal } from 'react-dom';
 import type { DispatchPlan, DispatchStop, DispatchTruck } from '../types';
 import {
   autoOrderAllUnsetTrucks,
   autoOrderTruckStops,
+  assignUnassignedJobsToTrucks,
   cancelMorningTextsForTruck,
   closeDispatchJob,
   createMockDispatchJob,
@@ -20,8 +21,12 @@ import {
   formatWindowLabel,
 } from '../utils/dispatchWindows';
 import { initiateVoiceWindowConfirmation } from '../services/voiceConfirmationService';
+import NotesWithScheduleHighlight from './NotesWithScheduleHighlight';
+import { locateScheduleEvidenceQuote } from '../utils/teamsAppointmentDate';
+import { detectWorkOrderSchedules } from '../services/workOrderService';
 import {
   cancelWorkOrderImport,
+  formatUsd,
   subscribeLatestWorkOrderImportProgress,
   type WorkOrderImportProgress,
 } from '../services/importProgressService';
@@ -99,6 +104,7 @@ function formatVoiceConfirmationLabel(stop: DispatchStop): string {
 function StopNode({
   stop,
   locked,
+  scheduleDate,
   onPriorityChange,
   onWindowChange,
   onCallConfirmation,
@@ -111,6 +117,7 @@ function StopNode({
 }: {
   stop: DispatchStop;
   locked: boolean;
+  scheduleDate: string;
   onPriorityChange?: (priority: number) => void;
   onWindowChange?: (start: string, end: string) => void;
   onCallConfirmation?: () => void;
@@ -123,6 +130,9 @@ function StopNode({
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const hasNotes = Boolean(stop.notes?.trim());
+  const scheduleEvidence = hasNotes
+    ? locateScheduleEvidenceQuote(stop.notes || '', stop.scheduleEvidenceQuote)
+    : null;
 
   useEffect(() => {
     if (!detailsOpen) return;
@@ -254,7 +264,18 @@ function StopNode({
               <section className="dispatch-details-modal__notes">
                 <h3>Notes</h3>
                 {hasNotes ? (
-                  <pre>{stop.notes}</pre>
+                  <>
+                    <NotesWithScheduleHighlight
+                      notes={stop.notes || ''}
+                      scheduleDate={scheduleDate}
+                      evidenceQuote={stop.scheduleEvidenceQuote}
+                    />
+                    {scheduleEvidence ? (
+                      <p className="dispatch-details-modal__evidence-hint">
+                        Highlighted text is why this job is on this day’s schedule.
+                      </p>
+                    ) : null}
+                  </>
                 ) : (
                   <p className="dispatch-details-modal__empty">
                     No notes on this work order yet.
@@ -402,7 +423,7 @@ export default function DispatchBoard({
     return () => {
       cancelled = true;
     };
-  }, [visibleDispatchDates]);
+  }, [visibleDispatchDates, boardEpoch]);
 
   useEffect(() => {
     return subscribeLatestWorkOrderImportProgress(
@@ -410,6 +431,57 @@ export default function DispatchBoard({
       (err) => console.warn('Could not subscribe to import progress:', err)
     );
   }, []);
+
+  const importRunStatus = importProgress?.status;
+  const previousImportStatus = useRef<string | null>(null);
+  useEffect(() => {
+    const previous = previousImportStatus.current;
+    previousImportStatus.current = importRunStatus ?? null;
+    if (previous === 'processing' && importRunStatus === 'completed') {
+      setBoardEpoch((value) => value + 1);
+      setStatus(importProgress?.message || 'Import finished. Reading job notes…');
+    }
+  }, [importRunStatus, importProgress?.message]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSaving(true);
+    void detectWorkOrderSchedules()
+      .then((result) => {
+        if (cancelled) return;
+        setError(null);
+        setStatus(
+          result.scanned
+            ? `Read ${result.scanned} job notes and booked ${result.booked} for a service day. Schedule OpenAI ${formatUsd(result.costUsd)}.`
+            : result.skipped
+              ? `Job notes unchanged. Using the last schedule read (${result.skipped} jobs). OpenAI $0.00`
+              : 'No job notes to read yet. Import PDFs from Teams, then refresh.'
+        );
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const code =
+          err && typeof err === 'object' && 'code' in err
+            ? String((err as { code: string }).code)
+            : '';
+        const message = err instanceof Error ? err.message : String(err);
+        if (code.includes('not-found') || /not found|NOT_FOUND/i.test(message)) {
+          setStatus(
+            'Schedule detection is not on the server yet. Deploy functions, then click Refresh jobs.'
+          );
+          return;
+        }
+        setStatus(
+          `Could not read job notes: ${message.replace(/^UNKNOWN:?\s*/i, '')}`
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setSaving(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [boardEpoch]);
 
   // Clear the per-stop "Calling…" button state once Firestore reports progress.
   useEffect(() => {
@@ -720,6 +792,30 @@ export default function DispatchBoard({
           </button>
           <button
             type="button"
+            disabled={saving || plan.unassigned.length === 0}
+            onClick={async () => {
+              setSaving(true);
+              setError(null);
+              try {
+                const assigned = await assignUnassignedJobsToTrucks(plan);
+                const moved = plan.unassigned.length - assigned.unassigned.length;
+                await persist(
+                  assigned,
+                  moved
+                    ? `Loaded ${moved} job${moved === 1 ? '' : 's'} onto trucks by distance. Nearby stops stay together.`
+                    : 'No ready jobs to load onto trucks.'
+                );
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            Load trucks by distance
+          </button>
+          <button
+            type="button"
             disabled={saving}
             onClick={async () => {
               setSaving(true);
@@ -740,7 +836,7 @@ export default function DispatchBoard({
             disabled={saving}
             onClick={() => {
               setBoardEpoch((value) => value + 1);
-              setStatus('Reloaded jobs for this date.');
+              setStatus('Reading job notes…');
             }}
           >
             Refresh jobs
@@ -802,6 +898,15 @@ export default function DispatchBoard({
             imported · {importProgress.cached} cached
             {importProgress.failed ? ` · ${importProgress.failed} failed` : ''}
           </span>
+          {(importProgress.pdfCostUsd != null ||
+            importProgress.scheduleCostUsd != null ||
+            importProgress.openaiCostUsd != null) && (
+            <span>
+              OpenAI: PDFs {formatUsd(importProgress.pdfCostUsd)} · schedule{' '}
+              {formatUsd(importProgress.scheduleCostUsd)} · total{' '}
+              {formatUsd(importProgress.openaiCostUsd)}
+            </span>
+          )}
           {importProgress.message && <small>{importProgress.message}</small>}
           {(importProgress.status === 'queued' ||
             importProgress.status === 'processing') && (
@@ -841,6 +946,7 @@ export default function DispatchBoard({
               key={stop.id}
               stop={stop}
               locked={false}
+              scheduleDate={plan.date}
               dragPayload={{ from: 'notReady', stopId: stop.id }}
               onDelete={() => void handleDeleteJob(stop)}
               deleting={deletingStopId === stop.id}
@@ -863,6 +969,7 @@ export default function DispatchBoard({
               key={stop.id}
               stop={stop}
               locked={false}
+              scheduleDate={plan.date}
               onPriorityChange={async (priority) => {
                 const next = {
                   ...plan,
@@ -953,6 +1060,7 @@ export default function DispatchBoard({
                   <StopNode
                     stop={stop}
                     locked={truck.set}
+                    scheduleDate={plan.date}
                     dragPayload={{
                       from: 'truck',
                       truckId: truck.id,

@@ -16,13 +16,22 @@ export const graphScopes = [
   'Files.Read.All',
 ];
 
+function azureRedirectUri() {
+  const origin = window.location.origin.replace(
+    'http://127.0.0.1:',
+    'http://localhost:'
+  );
+  const path = window.location.pathname.replace(/\/$/, '') || '/';
+  return `${origin}${path}`;
+}
+
 export const msalInstance = azureConfigError
   ? null
   : new PublicClientApplication({
       auth: {
         clientId,
         authority: `https://login.microsoftonline.com/${tenantId}`,
-        redirectUri: window.location.origin + window.location.pathname,
+        redirectUri: azureRedirectUri(),
       },
       cache: {
         cacheLocation: 'sessionStorage',
