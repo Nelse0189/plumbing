@@ -3,6 +3,7 @@ export const PLAUD_WEB_URL = 'https://web.plaud.ai/';
 export const PLAUD_WEB_ORIGIN = 'https://web.plaud.ai';
 
 const STORAGE_KEY = 'njPlumbingPlaudConnectToken';
+const POPUP_NAME = 'plaud-connect';
 
 export function isAllowedPlaudConnectOrigin(origin: string): boolean {
   return origin === PLAUD_WEB_ORIGIN || origin === window.location.origin;
@@ -42,14 +43,8 @@ export function consumePlaudConnectToken(): string {
   return token;
 }
 
-export function openPlaudConnectWindow(): Window | null {
-  return window.open(PLAUD_WEB_URL, 'plaud-connect', 'width=1100,height=800');
-}
-
-function plaudConnectBookmarkletSource(appOrigin: string): string {
-  return `(function(){
-  var app=${JSON.stringify(appOrigin)};
-  function jwt(value){
+function jwtExtractorSource(): string {
+  return `function jwt(value){
     var match=String(value||'').match(/eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+/);
     return match?match[0]:'';
   }
@@ -88,21 +83,33 @@ function plaudConnectBookmarkletSource(appOrigin: string): string {
     }catch(e){}
     return '';
   }
+  function grab(){
+    return cookieToken()||storageToken(localStorage)||storageToken(sessionStorage);
+  }`;
+}
+
+function plaudConnectBookmarkletSource(appOrigin: string): string {
+  return `(function(){
+  if(location.origin!==${JSON.stringify(PLAUD_WEB_ORIGIN)}){
+    alert('Click this on the Plaud window after you sign in, not on NJ Plumbing.');
+    return;
+  }
+  var app=${JSON.stringify(appOrigin)};
+  ${jwtExtractorSource()}
   function send(token){
     if(!token){
-      alert('No Plaud login found. Sign in at web.plaud.ai, then click Send to NJ Plumbing again. If it still fails, click a recording first.');
+      alert('No Plaud login found. Sign in at web.plaud.ai, then try again.');
       return;
     }
     try{
       if(window.opener&&!window.opener.closed){
         window.opener.postMessage({source:${JSON.stringify(PLAUD_CONNECT_SOURCE)},token:token},app);
-        window.close();
         return;
       }
     }catch(e){}
     location.href=app+'/#plaudConnect='+encodeURIComponent(token);
   }
-  var token=cookieToken()||storageToken(localStorage)||storageToken(sessionStorage);
+  var token=grab();
   if(token){send(token);return;}
   var original=window.fetch;
   window.fetch=function(){
@@ -114,10 +121,41 @@ function plaudConnectBookmarkletSource(appOrigin: string): string {
     if(found){window.fetch=original;send(found);}
     return original.apply(this,arguments);
   };
-  alert('Click any recording in Plaud. This will send the login to NJ Plumbing.');
+  alert('Signed into Plaud, but the login is not readable yet. Click any recording, then click this bookmark again.');
 })();`;
 }
 
 export function plaudConnectBookmarkletHref(appOrigin = window.location.origin): string {
   return `javascript:${encodeURIComponent(plaudConnectBookmarkletSource(appOrigin))}`;
+}
+
+let plaudPopup: Window | null = null;
+
+export function stopPlaudSignInWatcher() {
+  // Kept so older Call Intake unmount logic still compiles.
+}
+
+export function startPlaudSignIn(): { blocked: boolean } {
+  plaudPopup = window.open(PLAUD_WEB_URL, POPUP_NAME, 'width=1100,height=800');
+  if (!plaudPopup) {
+    return { blocked: true };
+  }
+  try {
+    plaudPopup.focus();
+  } catch {
+    /* ignore */
+  }
+  return { blocked: false };
+}
+
+export function focusPlaudWindow(): boolean {
+  if (!plaudPopup || plaudPopup.closed) {
+    plaudPopup = window.open(PLAUD_WEB_URL, POPUP_NAME, 'width=1100,height=800');
+  }
+  try {
+    plaudPopup?.focus();
+  } catch {
+    /* ignore */
+  }
+  return Boolean(plaudPopup && !plaudPopup.closed);
 }

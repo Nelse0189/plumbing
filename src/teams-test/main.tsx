@@ -32,15 +32,18 @@ import {
   importChannelPdfWorkOrder,
   initiateWorkOrderScheduling,
   listWorkOrders,
+  reinterpretWorkOrderSchedules,
   saveWorkOrder,
   startTeamsChannelImport,
 } from '../services/workOrderService';
 import {
   cancelWorkOrderImport,
+  formatUsd,
   subscribeLatestWorkOrderImportProgress,
   type WorkOrderImportProgress,
 } from '../services/importProgressService';
 import type { StoredWorkOrder, WorkOrder } from '../types';
+import NotesWithScheduleHighlight from '../components/NotesWithScheduleHighlight';
 import '../index.css';
 import './teams-test.css';
 
@@ -211,6 +214,13 @@ function TeamsGraphTestApp() {
     if (showLoading) setQueueLoading(true);
     setQueueError(null);
     try {
+      if (showLoading) {
+        try {
+          await reinterpretWorkOrderSchedules(await acquireToken());
+        } catch (err) {
+          setQueueError(err instanceof Error ? err.message : String(err));
+        }
+      }
       setStoredWorkOrders(await listWorkOrders(await acquireToken()));
     } catch (err) {
       setQueueError(err instanceof Error ? err.message : String(err));
@@ -815,7 +825,7 @@ function TeamsGraphTestApp() {
                   >
                     {weeklyImportLoading
                       ? 'Importing last 14 days…'
-                      : 'Import last 14 days'}
+                      : 'Import last 14 days (incl. older PDFs with new notes)'}
                   </button>
                 </div>
               )}
@@ -845,6 +855,15 @@ function TeamsGraphTestApp() {
                       ? ` · ${importProgress.failed} failed`
                       : ''}
                   </span>
+                  {(importProgress.pdfCostUsd != null ||
+                    importProgress.scheduleCostUsd != null ||
+                    importProgress.openaiCostUsd != null) && (
+                    <span>
+                      OpenAI: PDFs {formatUsd(importProgress.pdfCostUsd)} · schedule{' '}
+                      {formatUsd(importProgress.scheduleCostUsd)} · total{' '}
+                      {formatUsd(importProgress.openaiCostUsd)}
+                    </span>
+                  )}
                   {importProgress.message && <small>{importProgress.message}</small>}
                   {(importProgress.status === 'queued' ||
                     importProgress.status === 'processing') && (
@@ -1046,8 +1065,8 @@ function TeamsGraphTestApp() {
               <div>
                 <h2>Scheduling database</h2>
                 <p>
-                  Scheduling texts are routed only to +1 860-964-3025 during
-                  testing.
+                  Refresh jobs re-reads Teams notes with AI to decide the
+                  service day, then reloads the list.
                 </p>
               </div>
               <div className="teams-test__attachment-actions">
@@ -1201,7 +1220,11 @@ function TeamsGraphTestApp() {
                 <section>
                   <h3>Notes</h3>
                   {notesWorkOrder.notes?.trim() ? (
-                    <pre>{notesWorkOrder.notes}</pre>
+                    <NotesWithScheduleHighlight
+                      notes={notesWorkOrder.notes}
+                      scheduleDate={notesWorkOrder.appointmentDate}
+                      evidenceQuote={notesWorkOrder.scheduleEvidenceQuote}
+                    />
                   ) : (
                     <p className="teams-test__hint">No notes on this work order.</p>
                   )}

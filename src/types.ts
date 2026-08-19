@@ -8,6 +8,7 @@ export interface Stop {
   jobType?: string;
   sourceFileName?: string;
   notes?: string;
+  scheduleEvidenceQuote?: string;
   lat?: number;
   lng?: number;
   /** Filled when the stop was created from a call/voicemail transcript */
@@ -37,6 +38,8 @@ export interface WorkOrder {
   appointmentDate: string;
   appointmentTime: string;
   notes: string;
+  /** Verbatim span from notes that booked the service day (from AI). */
+  scheduleEvidenceQuote?: string;
   sourceFileName: string;
   smsConsent: boolean;
   confidence?: number;
@@ -53,6 +56,8 @@ export interface StoredWorkOrder extends WorkOrder {
   cached?: boolean;
   callSummary?: string;
   source?: string;
+  autoImported?: boolean;
+  mock?: boolean;
 }
 
 export interface PlaudAppointmentEvidence {
@@ -83,6 +88,7 @@ export interface PlaudCall {
   address?: string;
   appointmentDate?: string;
   appointmentTime?: string;
+  costUsd?: number;
   status: 'processed' | 'needs_review' | 'failed' | 'awaiting_transcript' | 'processing' | 'in_plaud';
   error?: string;
   source?: string;
@@ -112,6 +118,7 @@ export interface PlaudSyncSummary {
   saved?: number;
   remaining?: number;
   incomplete?: boolean;
+  costUsd?: number;
   scope?: string;
   plaudTotal?: number;
 }
@@ -131,6 +138,7 @@ export interface DispatchStop {
   address: string;
   jobType: string;
   notes: string;
+  scheduleEvidenceQuote?: string;
   sourceFileName?: string;
   /** Higher priority runs earlier than distance order. */
   priority: number;

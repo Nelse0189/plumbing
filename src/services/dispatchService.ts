@@ -54,6 +54,7 @@ function toDispatchStop(
     | 'address'
     | 'jobType'
     | 'notes'
+    | 'scheduleEvidenceQuote'
     | 'sourceFileName'
   >,
   index = 0
@@ -67,6 +68,7 @@ function toDispatchStop(
     address: workOrder.address,
     jobType: workOrder.jobType,
     notes: workOrder.notes || '',
+    scheduleEvidenceQuote: workOrder.scheduleEvidenceQuote || '',
     sourceFileName: workOrder.sourceFileName,
     priority: 0,
     window: defaultWindowForStopIndex(index),
@@ -75,37 +77,71 @@ function toDispatchStop(
   };
 }
 
+type WorkOrderDoc = WorkOrder & {
+  status?: string;
+  selectedTime?: string;
+  callSummary?: string;
+  source?: string;
+  autoImported?: boolean;
+  mock?: boolean;
+};
+
+function mapStoredWorkOrder(
+  documentId: string,
+  data: WorkOrderDoc,
+  fallbackDate = ''
+): StoredWorkOrder {
+  return {
+    id: documentId,
+    workOrderNumber: data.workOrderNumber || '',
+    customerName: data.customerName || '',
+    phone: data.phone || '',
+    address: data.address || '',
+    jobType: data.jobType || '',
+    appointmentDate: data.appointmentDate || fallbackDate,
+    appointmentTime: data.appointmentTime || '',
+    notes: data.notes || '',
+    scheduleEvidenceQuote: data.scheduleEvidenceQuote || '',
+    sourceFileName: data.sourceFileName || '',
+    smsConsent: data.smsConsent === true,
+    confidence: data.confidence,
+    status: (data.status as StoredWorkOrder['status']) || 'unscheduled',
+    selectedTime: data.selectedTime,
+    callSummary: data.callSummary || '',
+    source: data.source || '',
+    autoImported: data.autoImported === true,
+    mock: data.mock === true,
+    teamsTeamId: data.teamsTeamId,
+    teamsChannelId: data.teamsChannelId,
+    teamsMessageId: data.teamsMessageId,
+    teamsAttachmentId: data.teamsAttachmentId,
+  };
+}
+
+/** A job belongs on this dispatch day when Sol (or a mock job) stored that date. */
+function workOrderBelongsOnDispatchDate(data: WorkOrderDoc, date: string): boolean {
+  if (data.status === 'closed') return false;
+  return (data.appointmentDate || '').trim() === date;
+}
+
+function workOrdersFromSnapshot(
+  snapshot: { docs: Array<{ id: string; data: () => unknown }> },
+  date: string
+): StoredWorkOrder[] {
+  const byId = new Map<string, StoredWorkOrder>();
+  for (const document of snapshot.docs) {
+    const data = document.data() as WorkOrderDoc;
+    if (!workOrderBelongsOnDispatchDate(data, date)) continue;
+    byId.set(document.id, mapStoredWorkOrder(document.id, data, date));
+  }
+  return [...byId.values()];
+}
+
 export async function listWorkOrdersForDate(date: string): Promise<StoredWorkOrder[]> {
   const snapshot = await getDocs(
     query(collection(db, WORK_ORDERS_COLLECTION), where('appointmentDate', '==', date))
   );
-
-  return snapshot.docs.map((document) => {
-    const data = document.data() as WorkOrder & {
-      status?: string;
-      selectedTime?: string;
-      callSummary?: string;
-      source?: string;
-    };
-    return {
-      id: document.id,
-      workOrderNumber: data.workOrderNumber || '',
-      customerName: data.customerName || '',
-      phone: data.phone || '',
-      address: data.address || '',
-      jobType: data.jobType || '',
-      appointmentDate: data.appointmentDate || date,
-      appointmentTime: data.appointmentTime || '',
-      notes: data.notes || '',
-      sourceFileName: data.sourceFileName || '',
-      smsConsent: data.smsConsent === true,
-      confidence: data.confidence,
-      status: (data.status as StoredWorkOrder['status']) || 'unscheduled',
-      selectedTime: data.selectedTime,
-      callSummary: data.callSummary || '',
-      source: data.source || '',
-    };
-  });
+  return workOrdersFromSnapshot(snapshot, date);
 }
 
 function collectAssignedIds(plan: DispatchPlan): Set<string> {
@@ -133,24 +169,40 @@ export function mergeWorkOrdersIntoPlan(
     notReady: [...plan.notReady],
   };
 
-  // Move not-ready → unassigned if notes appear; unassigned → not-ready if notes cleared
+  const syncStop = (stop: DispatchStop, live: StoredWorkOrder): DispatchStop => ({
+    ...stop,
+    notes: live.notes || '',
+    scheduleEvidenceQuote: live.scheduleEvidenceQuote || '',
+  });
+
+  // Drop jobs whose stored appointment date is no longer this day.
+  // Move not-ready → unassigned if notes appear; unassigned → not-ready if notes cleared.
   const refreshLane = (stops: DispatchStop[], ready: boolean) =>
     stops.filter((stop) => {
       const live = workOrders.find((order) => order.id === stop.workOrderId);
-      if (!live) return true;
-      if (live.status === 'closed') return false;
+      if (!live || live.status === 'closed') return false;
+      Object.assign(stop, syncStop(stop, live));
       const hasNotes = workOrderHasNotes(live.notes);
-      stop.notes = live.notes || '';
       if (ready && !hasNotes) {
-        next.notReady.push({ ...stop, notes: live.notes || '' });
+        next.notReady.push(syncStop(stop, live));
         return false;
       }
       if (!ready && hasNotes) {
-        next.unassigned.push({ ...stop, notes: live.notes || '' });
+        next.unassigned.push(syncStop(stop, live));
         return false;
       }
       return true;
     });
+
+  next.trucks = next.trucks.map((truck) => ({
+    ...truck,
+    stops: truck.stops.filter((stop) => {
+      const live = workOrders.find((order) => order.id === stop.workOrderId);
+      if (!live || live.status === 'closed') return false;
+      Object.assign(stop, syncStop(stop, live));
+      return true;
+    }),
+  }));
 
   next.unassigned = refreshLane(next.unassigned, true);
   next.notReady = refreshLane(next.notReady, false);
@@ -263,34 +315,33 @@ async function loadWorkOrdersByIds(ids: string[]): Promise<StoredWorkOrder[]> {
     unique.map(async (id) => {
       const snap = await getDoc(doc(db, WORK_ORDERS_COLLECTION, id));
       if (!snap.exists()) return null;
-      const data = snap.data() as WorkOrder & {
-        status?: string;
-        selectedTime?: string;
-        callSummary?: string;
-        source?: string;
-      };
-      const workOrder: StoredWorkOrder = {
-        id: snap.id,
-        workOrderNumber: data.workOrderNumber || '',
-        customerName: data.customerName || '',
-        phone: data.phone || '',
-        address: data.address || '',
-        jobType: data.jobType || '',
-        appointmentDate: data.appointmentDate || '',
-        appointmentTime: data.appointmentTime || '',
-        notes: data.notes || '',
-        sourceFileName: data.sourceFileName || '',
-        smsConsent: data.smsConsent === true,
-        confidence: data.confidence,
-        status: (data.status as StoredWorkOrder['status']) || 'unscheduled',
-        selectedTime: data.selectedTime,
-        callSummary: data.callSummary || '',
-        source: data.source || '',
-      };
-      return workOrder;
+      return mapStoredWorkOrder(snap.id, snap.data() as WorkOrderDoc);
     })
   );
   return loaded.filter((item): item is StoredWorkOrder => item !== null);
+}
+
+export async function findWorkOrderForCall(input: {
+  workOrderId?: string;
+  workOrderNumber?: string;
+}): Promise<StoredWorkOrder | null> {
+  const number = (input.workOrderNumber || '').trim();
+  if (number) {
+    const snapshot = await getDocs(
+      query(collection(db, WORK_ORDERS_COLLECTION), where('workOrderNumber', '==', number))
+    );
+    const matches = snapshot.docs
+      .map((document) => mapStoredWorkOrder(document.id, document.data() as WorkOrderDoc))
+      .filter((order) => order.status !== 'closed' && order.mock !== true);
+    const imported = matches.find((order) => order.autoImported || order.source !== 'plaud_call');
+    if (imported) return imported;
+    if (matches[0]) return matches[0];
+  }
+  if (input.workOrderId) {
+    const loaded = await loadWorkOrdersByIds([input.workOrderId]);
+    if (loaded[0]) return loaded[0];
+  }
+  return null;
 }
 
 export async function getDaySchedulingInfo(
@@ -449,30 +500,42 @@ export function subscribeDispatchPlan(
   onError?: (error: Error) => void
 ): Unsubscribe {
   const planRef = doc(db, DISPATCH_COLLECTION, date);
+  const workOrdersQuery = query(
+    collection(db, WORK_ORDERS_COLLECTION),
+    where('appointmentDate', '==', date)
+  );
   let cancelled = false;
-  let requestId = 0;
-  let workOrdersCache: StoredWorkOrder[] | null = null;
+  let plan: DispatchPlan | null = null;
+  let workOrders: StoredWorkOrder[] | null = null;
+  let gotPlan = false;
+  let gotOrders = false;
 
-  const unsubscribe = onSnapshot(
+  const emit = () => {
+    if (cancelled || !gotPlan || !gotOrders || !plan || !workOrders) return;
+    onChange(mergeWorkOrdersIntoPlan(plan, workOrders));
+  };
+
+  const unsubscribePlan = onSnapshot(
     planRef,
     (snap) => {
-      const currentRequest = ++requestId;
-      void (async () => {
-        try {
-          if (!workOrdersCache) {
-            workOrdersCache = await listWorkOrdersForDate(date);
-          }
-          if (cancelled || currentRequest !== requestId) return;
-          const plan = planFromSnapshotData(
-            date,
-            snap.exists() ? (snap.data() as Record<string, unknown>) : undefined
-          );
-          onChange(mergeWorkOrdersIntoPlan(plan, workOrdersCache));
-        } catch (err) {
-          if (cancelled || currentRequest !== requestId) return;
-          onError?.(err instanceof Error ? err : new Error(String(err)));
-        }
-      })();
+      gotPlan = true;
+      plan = planFromSnapshotData(
+        date,
+        snap.exists() ? (snap.data() as Record<string, unknown>) : undefined
+      );
+      emit();
+    },
+    (error) => {
+      if (!cancelled) onError?.(error);
+    }
+  );
+
+  const unsubscribeOrders = onSnapshot(
+    workOrdersQuery,
+    (snapshot) => {
+      gotOrders = true;
+      workOrders = workOrdersFromSnapshot(snapshot, date);
+      emit();
     },
     (error) => {
       if (!cancelled) onError?.(error);
@@ -481,7 +544,8 @@ export function subscribeDispatchPlan(
 
   return () => {
     cancelled = true;
-    unsubscribe();
+    unsubscribePlan();
+    unsubscribeOrders();
   };
 }
 
@@ -559,6 +623,91 @@ export async function autoOrderAllUnsetTrucks(plan: DispatchPlan): Promise<Dispa
     }),
   };
   return next;
+}
+
+function stopCoordinates(
+  stop: DispatchStop
+): { lat: number; lng: number } | null {
+  if (stop.lat == null || stop.lng == null) return null;
+  return { lat: stop.lat, lng: stop.lng };
+}
+
+function truckCentroid(
+  stops: DispatchStop[],
+  origin: { lat: number; lng: number } | null
+): { lat: number; lng: number } | null {
+  const points = stops
+    .map(stopCoordinates)
+    .filter((point): point is { lat: number; lng: number } => Boolean(point));
+  if (!points.length) return origin;
+  return {
+    lat: points.reduce((sum, point) => sum + point.lat, 0) / points.length,
+    lng: points.reduce((sum, point) => sum + point.lng, 0) / points.length,
+  };
+}
+
+/**
+ * Place Ready / Unassigned jobs onto trucks that are not set.
+ * Nearby jobs stay together; trucks are load-balanced; each truck is then
+ * ordered farthest-from-depot first.
+ */
+export async function assignUnassignedJobsToTrucks(
+  plan: DispatchPlan
+): Promise<DispatchPlan> {
+  const withDistances = await enrichDistances(plan);
+  const trucks = withDistances.trucks.map((truck) => ({
+    ...truck,
+    stops: [...truck.stops],
+  }));
+  const openIndexes = trucks
+    .map((truck, index) => (truck.set ? -1 : index))
+    .filter((index) => index >= 0);
+  if (!openIndexes.length) {
+    throw new Error('All trucks are set. Reopen a truck first.');
+  }
+  if (!withDistances.unassigned.length) {
+    return withDistances;
+  }
+
+  const origin = await geocodeAddress(withDistances.originAddress);
+  const jobs = sortFarthestFirst(withDistances.unassigned);
+  const alreadyAssigned = openIndexes.reduce(
+    (count, index) => count + trucks[index].stops.length,
+    0
+  );
+  const cap = Math.max(
+    1,
+    Math.ceil((alreadyAssigned + jobs.length) / openIndexes.length)
+  );
+
+  for (const job of jobs) {
+    const point = stopCoordinates(job);
+    let bestIndex = openIndexes[0];
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (const index of openIndexes) {
+      const truck = trucks[index];
+      const centroid = truckCentroid(truck.stops, origin);
+      const travel =
+        point && centroid ? haversineMiles(point, centroid) : truck.stops.length;
+      const overCap = truck.stops.length >= cap ? 1000 : 0;
+      const score = travel + overCap + truck.stops.length * 0.05;
+      if (score < bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    }
+    trucks[bestIndex].stops.push(job);
+  }
+
+  return {
+    ...withDistances,
+    unassigned: [],
+    trucks: trucks.map((truck) =>
+      truck.set
+        ? truck
+        : { ...truck, stops: applyDefaultWindows(sortFarthestFirst(truck.stops)) }
+    ),
+  };
 }
 
 /** Convert a wall-clock time in America/New_York on YYYY-MM-DD to ISO UTC. */

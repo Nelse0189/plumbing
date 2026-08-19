@@ -1,12 +1,15 @@
+import { resolveGoogleMapsApiKey } from './mapsKey';
+
 export async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
-  if (!import.meta.env.VITE_GOOGLE_MAPS_API_KEY) {
+  const apiKey = await resolveGoogleMapsApiKey();
+  if (!apiKey) {
     console.warn('Google Maps API key not configured');
     return null;
   }
 
   try {
     const response = await fetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY}`
+      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${apiKey}`
     );
     const data = await response.json();
 
@@ -23,8 +26,3 @@ export async function geocodeAddress(address: string): Promise<{ lat: number; ln
     return null;
   }
 }
-
-
-
-
-
