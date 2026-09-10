@@ -1,0 +1,292 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000031 /* NJPlumberApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000011 /* NJPlumberApp.swift */; };
+		A10000000000000000000032 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* AppDelegate.swift */; };
+		A10000000000000000000033 /* WebScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* WebScreen.swift */; };
+		A10000000000000000000034 /* LocationReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* LocationReporter.swift */; };
+		A1000000000000000000003A /* ClockScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* ClockScreen.swift */; };
+		A1000000000000000000003B /* TimeClockAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* TimeClockAPI.swift */; };
+		A10000000000000000000035 /* CoreLocation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000021 /* CoreLocation.framework */; };
+		A10000000000000000000036 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000022 /* WebKit.framework */; };
+		A10000000000000000000037 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* Assets.xcassets */; };
+		A10000000000000000000038 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* PrivacyInfo.xcprivacy */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A10000000000000000000001 /* NJPlumber.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NJPlumber.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000011 /* NJPlumberApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NJPlumberApp.swift; sourceTree = "<group>"; };
+		A10000000000000000000012 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		A10000000000000000000013 /* WebScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebScreen.swift; sourceTree = "<group>"; };
+		A10000000000000000000014 /* LocationReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationReporter.swift; sourceTree = "<group>"; };
+		A10000000000000000000018 /* ClockScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClockScreen.swift; sourceTree = "<group>"; };
+		A10000000000000000000019 /* TimeClockAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeClockAPI.swift; sourceTree = "<group>"; };
+		A10000000000000000000015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A10000000000000000000016 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A10000000000000000000017 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A10000000000000000000021 /* CoreLocation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreLocation.framework; path = System/Library/Frameworks/CoreLocation.framework; sourceTree = SDKROOT; };
+		A10000000000000000000022 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A10000000000000000000041 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000035 /* CoreLocation.framework in Frameworks */,
+				A10000000000000000000036 /* WebKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A10000000000000000000051 = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000052 /* NJPlumber */,
+				A10000000000000000000053 /* Frameworks */,
+				A10000000000000000000054 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A10000000000000000000052 /* NJPlumber */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000011 /* NJPlumberApp.swift */,
+				A10000000000000000000012 /* AppDelegate.swift */,
+				A10000000000000000000013 /* WebScreen.swift */,
+				A10000000000000000000014 /* LocationReporter.swift */,
+				A10000000000000000000018 /* ClockScreen.swift */,
+				A10000000000000000000019 /* TimeClockAPI.swift */,
+				A10000000000000000000015 /* Assets.xcassets */,
+				A10000000000000000000016 /* Info.plist */,
+				A10000000000000000000017 /* PrivacyInfo.xcprivacy */,
+			);
+			path = NJPlumber;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000053 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000021 /* CoreLocation.framework */,
+				A10000000000000000000022 /* WebKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000054 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000001 /* NJPlumber.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A10000000000000000000061 /* NJPlumber */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000081 /* Build configuration list for PBXNativeTarget "NJPlumber" */;
+			buildPhases = (
+				A10000000000000000000071 /* Sources */,
+				A10000000000000000000041 /* Frameworks */,
+				A10000000000000000000072 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NJPlumber;
+			productName = NJPlumber;
+			productReference = A10000000000000000000001 /* NJPlumber.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000000000000000000091 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					A10000000000000000000061 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = A10000000000000000000082 /* Build configuration list for PBXProject "NJPlumber" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A10000000000000000000051;
+			productRefGroup = A10000000000000000000054 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A10000000000000000000061 /* NJPlumber */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A10000000000000000000072 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000037 /* Assets.xcassets in Resources */,
+				A10000000000000000000038 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A10000000000000000000071 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000031 /* NJPlumberApp.swift in Sources */,
+				A10000000000000000000032 /* AppDelegate.swift in Sources */,
+				A10000000000000000000033 /* WebScreen.swift in Sources */,
+				A10000000000000000000034 /* LocationReporter.swift in Sources */,
+				A1000000000000000000003A /* ClockScreen.swift in Sources */,
+				A1000000000000000000003B /* TimeClockAPI.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A100000000000000000000A1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A100000000000000000000A2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A100000000000000000000A3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NJPlumber/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "NJ Plumber";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.njplumbing.plumber;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A100000000000000000000A4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NJPlumber/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "NJ Plumber";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.njplumbing.plumber;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A10000000000000000000081 /* Build configuration list for PBXNativeTarget "NJPlumber" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A100000000000000000000A3 /* Debug */,
+				A100000000000000000000A4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000082 /* Build configuration list for PBXProject "NJPlumber" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A100000000000000000000A1 /* Debug */,
+				A100000000000000000000A2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A10000000000000000000091 /* Project object */;
+}

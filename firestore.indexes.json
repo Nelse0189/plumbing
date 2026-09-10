@@ -1,0 +1,36 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "timeShifts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "date", "order": "ASCENDING" },
+        { "fieldPath": "clockInAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "timeShifts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "plumberId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "voiceKnowledgeChunks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "embedding", "vectorConfig": { "dimension": 1536, "flat": {} } }
+      ]
+    },
+    {
+      "collectionGroup": "voiceKnowledgeChunks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "date", "order": "ASCENDING" },
+        { "fieldPath": "embedding", "vectorConfig": { "dimension": 1536, "flat": {} } }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

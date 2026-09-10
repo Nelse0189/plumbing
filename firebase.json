@@ -70,12 +70,58 @@
             "value": "no-store, max-age=0"
           }
         ]
+      },
+      {
+        "source": "/work-order",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-store, max-age=0"
+          }
+        ]
+      },
+      {
+        "source": "/plumber",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-store, max-age=0"
+          }
+        ]
+      },
+      {
+        "source": "/ticket",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-store, max-age=0"
+          }
+        ]
       }
     ],
     "rewrites": [
       {
+        "source": "/api/dispatch",
+        "function": {
+          "functionId": "listDispatch",
+          "region": "us-central1"
+        }
+      },
+      {
         "source": "/teams-test",
         "destination": "/teams-test.html"
+      },
+      {
+        "source": "/work-order",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/plumber",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/ticket",
+        "destination": "/index.html"
       },
       {
         "source": "**",
@@ -97,6 +143,7 @@
     ]
   },
   "firestore": {
-    "rules": "firestore.rules"
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
   }
 }

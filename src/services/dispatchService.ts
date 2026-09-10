@@ -20,6 +20,8 @@ import type {
   StoredWorkOrder,
   WorkOrder,
 } from '../types';
+import { notesDuplicateAnotherWorkOrder } from '../utils/duplicateWorkOrder';
+import { customerPhonesOf, parseCustomerPhones } from '../utils/customerPhones';
 import { getSchedule } from './scheduleService';
 import { geocodeAddress } from '../utils/geocode';
 import { haversineMiles, sortFarthestFirst } from '../utils/distance';
@@ -29,7 +31,14 @@ import {
   DEFAULT_DISPATCH_ORIGIN,
   defaultWindowForStopIndex,
   formatWindowLabel,
+  windowsEqual,
 } from '../utils/dispatchWindows';
+import {
+  applyPlumberAssignmentsToPlan,
+  loadPlumbers,
+  mapPlumbers,
+  PLUMBERS_DOC,
+} from './plumberService';
 
 const DISPATCH_COLLECTION = 'dispatchPlans';
 const WORK_ORDERS_COLLECTION = 'workOrders';
@@ -44,6 +53,16 @@ function workOrderHasNotes(notes: string | undefined): boolean {
   return Boolean(notes && notes.trim().length > 0);
 }
 
+/** Manual and mock jobs are ready even without Teams/PDF notes. */
+function workOrderIsReadyForDispatch(workOrder: {
+  notes?: string;
+  source?: string;
+  mock?: boolean;
+}): boolean {
+  if (workOrder.mock || workOrder.source === 'manual') return true;
+  return workOrderHasNotes(workOrder.notes);
+}
+
 function toDispatchStop(
   workOrder: Pick<
     StoredWorkOrder,
@@ -51,11 +70,13 @@ function toDispatchStop(
     | 'workOrderNumber'
     | 'customerName'
     | 'phone'
+    | 'phones'
     | 'address'
     | 'jobType'
     | 'notes'
     | 'scheduleEvidenceQuote'
     | 'sourceFileName'
+    | 'installDescription'
   >,
   index = 0
 ): DispatchStop {
@@ -65,11 +86,13 @@ function toDispatchStop(
     workOrderNumber: workOrder.workOrderNumber,
     customerName: workOrder.customerName,
     phone: workOrder.phone,
+    phones: customerPhonesOf(workOrder),
     address: workOrder.address,
     jobType: workOrder.jobType,
     notes: workOrder.notes || '',
     scheduleEvidenceQuote: workOrder.scheduleEvidenceQuote || '',
     sourceFileName: workOrder.sourceFileName,
+    installDescription: workOrder.installDescription || '',
     priority: 0,
     window: defaultWindowForStopIndex(index),
     customWindow: false,
@@ -79,11 +102,16 @@ function toDispatchStop(
 
 type WorkOrderDoc = WorkOrder & {
   status?: string;
+  manualSchedule?: boolean;
   selectedTime?: string;
   callSummary?: string;
   source?: string;
   autoImported?: boolean;
   mock?: boolean;
+  permitPulled?: boolean;
+  permitPulledAt?: string;
+  retailerUploaded?: boolean;
+  retailerUploadedAt?: string;
 };
 
 function mapStoredWorkOrder(
@@ -96,6 +124,7 @@ function mapStoredWorkOrder(
     workOrderNumber: data.workOrderNumber || '',
     customerName: data.customerName || '',
     phone: data.phone || '',
+    phones: parseCustomerPhones(data.phones, data.phone),
     address: data.address || '',
     jobType: data.jobType || '',
     appointmentDate: data.appointmentDate || fallbackDate,
@@ -103,14 +132,22 @@ function mapStoredWorkOrder(
     notes: data.notes || '',
     scheduleEvidenceQuote: data.scheduleEvidenceQuote || '',
     sourceFileName: data.sourceFileName || '',
+    installDescription: data.installDescription || '',
+    pdfServiceDate: data.pdfServiceDate || '',
+    duplicateOfWorkOrderNumber: data.duplicateOfWorkOrderNumber || '',
     smsConsent: data.smsConsent === true,
     confidence: data.confidence,
     status: (data.status as StoredWorkOrder['status']) || 'unscheduled',
+    manualSchedule: data.manualSchedule === true,
     selectedTime: data.selectedTime,
     callSummary: data.callSummary || '',
     source: data.source || '',
     autoImported: data.autoImported === true,
     mock: data.mock === true,
+    permitPulled: data.permitPulled === true,
+    permitPulledAt: data.permitPulledAt || undefined,
+    retailerUploaded: data.retailerUploaded === true,
+    retailerUploadedAt: data.retailerUploadedAt || undefined,
     teamsTeamId: data.teamsTeamId,
     teamsChannelId: data.teamsChannelId,
     teamsMessageId: data.teamsMessageId,
@@ -118,9 +155,21 @@ function mapStoredWorkOrder(
   };
 }
 
+function workOrderIsDuplicate(data: {
+  duplicateOfWorkOrderNumber?: string;
+  workOrderNumber?: string;
+  notes?: string;
+}): boolean {
+  if ((data.duplicateOfWorkOrderNumber || '').trim()) return true;
+  return notesDuplicateAnotherWorkOrder(data.notes || '', data.workOrderNumber || '');
+}
+
 /** A job belongs on this dispatch day when Sol (or a mock job) stored that date. */
 function workOrderBelongsOnDispatchDate(data: WorkOrderDoc, date: string): boolean {
   if (data.status === 'closed') return false;
+  // A hand-scheduled job always dispatches, even when the notes read like a
+  // duplicate order; staff explicitly asked for it on the board.
+  if (data.manualSchedule !== true && workOrderIsDuplicate(data)) return false;
   return (data.appointmentDate || '').trim() === date;
 }
 
@@ -144,20 +193,232 @@ export async function listWorkOrdersForDate(date: string): Promise<StoredWorkOrd
   return workOrdersFromSnapshot(snapshot, date);
 }
 
+export function workOrderKey(stop: Pick<DispatchStop, 'id' | 'workOrderId'>): string {
+  return (stop.workOrderId || stop.id).trim();
+}
+
 function collectAssignedIds(plan: DispatchPlan): Set<string> {
   const ids = new Set<string>();
   for (const truck of plan.trucks) {
-    for (const stop of truck.stops) ids.add(stop.workOrderId);
+    for (const stop of truck.stops) ids.add(workOrderKey(stop));
   }
-  for (const stop of plan.unassigned) ids.add(stop.workOrderId);
-  for (const stop of plan.notReady) ids.add(stop.workOrderId);
+  for (const stop of plan.unassigned) ids.add(workOrderKey(stop));
+  for (const stop of plan.notReady) ids.add(workOrderKey(stop));
   return ids;
+}
+
+/** Trucks that already have this work order as an active stop. */
+export function trucksCarryingWorkOrder(
+  plan: DispatchPlan,
+  workOrderId: string
+): DispatchTruck[] {
+  const key = workOrderId.trim();
+  if (!key) return [];
+  return plan.trucks.filter((truck) =>
+    truck.stops.some((stop) => workOrderKey(stop) === key && !stop.cancelled)
+  );
+}
+
+function workOrderHasOtherStops(plan: DispatchPlan, stop: DispatchStop): boolean {
+  return listWorkOrderStops(plan, workOrderKey(stop)).some((item) => item.stop.id !== stop.id);
+}
+
+function listWorkOrderStops(
+  plan: DispatchPlan,
+  workOrderId: string
+): Array<{ stop: DispatchStop; truckId: string | null }> {
+  const key = workOrderId.trim();
+  const hits: Array<{ stop: DispatchStop; truckId: string | null }> = [];
+  for (const truck of plan.trucks) {
+    for (const stop of truck.stops) {
+      if (workOrderKey(stop) === key) hits.push({ stop, truckId: truck.id });
+    }
+  }
+  for (const stop of plan.unassigned) {
+    if (workOrderKey(stop) === key) hits.push({ stop, truckId: null });
+  }
+  for (const stop of plan.notReady) {
+    if (workOrderKey(stop) === key) hits.push({ stop, truckId: null });
+  }
+  return hits;
+}
+
+export function planWithoutStop(plan: DispatchPlan, stopId: string): DispatchPlan {
+  return {
+    ...plan,
+    unassigned: plan.unassigned.filter((stop) => stop.id !== stopId),
+    notReady: plan.notReady.filter((stop) => stop.id !== stopId),
+    trucks: plan.trucks.map((truck) => {
+      if (!truck.stops.some((stop) => stop.id === stopId)) return truck;
+      return {
+        ...truck,
+        stops: applyDefaultWindows(truck.stops.filter((stop) => stop.id !== stopId)),
+      };
+    }),
+  };
+}
+
+function newDispatchCopyStopId(workOrderId: string): string {
+  const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  return `${workOrderId}__copy-${stamp}`.slice(0, 140);
+}
+
+/** Same job, new stop id — used when two trucks go to one work order. */
+export function cloneDispatchStopForCopy(stop: DispatchStop): DispatchStop {
+  const workOrderId = workOrderKey(stop);
+  const copy: DispatchStop = {
+    ...stop,
+    id: newDispatchCopyStopId(workOrderId),
+    workOrderId,
+    copiedFromStopId: stop.id,
+    cancelled: false,
+    customWindow: true,
+    morningTextStatus: 'none',
+  };
+  delete copy.movedToDate;
+  delete copy.windowSmsNotifiedKey;
+  delete copy.voiceCallStatus;
+  delete copy.voiceConfirmationResponse;
+  delete copy.voiceConfirmationDetails;
+  delete copy.voiceConfirmationAt;
+  delete copy.voiceWantsHumanCallback;
+  delete copy.voiceHumanCallbackDetails;
+  delete copy.voiceConfirmationId;
+  delete copy.voiceConversationId;
+  return copy;
+}
+
+/**
+ * Puts the same work order on another truck without taking it off the first.
+ * Windows stay as they are so both crews can share the customer arrival time.
+ */
+export function duplicateDispatchStopToTruck(
+  plan: DispatchPlan,
+  stopId: string,
+  targetTruckId: string
+): DispatchPlan {
+  const found = findStopOnPlan(plan, stopId);
+  if (!found) {
+    throw new Error('That job is no longer on the board.');
+  }
+  if (found.stop.cancelled) {
+    throw new Error('Restore the job before copying it to another truck.');
+  }
+  const target = plan.trucks.find((truck) => truck.id === targetTruckId);
+  if (!target) {
+    throw new Error('That truck is not on this day’s board.');
+  }
+  if (target.set) {
+    throw new Error(`Reopen ${target.name} before adding a copy.`);
+  }
+  const key = workOrderKey(found.stop);
+  if (target.stops.some((stop) => workOrderKey(stop) === key)) {
+    throw new Error(`That job is already on ${target.name}.`);
+  }
+  const copy = cloneDispatchStopForCopy(found.stop);
+  return {
+    ...plan,
+    trucks: plan.trucks.map((truck) => {
+      if (truck.id !== targetTruckId) return truck;
+      return { ...truck, stops: applyDefaultWindows([...truck.stops, copy]) };
+    }),
+  };
+}
+
+/**
+ * Work orders referenced by the saved plan that are no longer in this day's
+ * query, keyed by work-order id. `null` means the document was deleted.
+ */
+export type OffDayWorkOrders = ReadonlyMap<string, StoredWorkOrder | null>;
+
+function syncStopWithLiveOrder(stop: DispatchStop, live: StoredWorkOrder): DispatchStop {
+  const phones = customerPhonesOf(live);
+  return {
+    ...stop,
+    notes: live.notes || '',
+    scheduleEvidenceQuote: live.scheduleEvidenceQuote || '',
+    phone: phones[0] || live.phone || stop.phone,
+    phones,
+  };
+}
+
+/**
+ * When a saved stop's work order moved to another day, return the stop marked
+ * cancelled with `movedToDate` so the board shows where it went instead of
+ * silently dropping it. Returns null when the stop should simply be dropped
+ * (deleted, closed, duplicate, or a same-day sibling copy).
+ */
+function movedStopFor(
+  stop: DispatchStop,
+  date: string,
+  offDayOrders?: OffDayWorkOrders
+): DispatchStop | null {
+  const order = offDayOrders?.get(stop.workOrderId);
+  if (!order) return null;
+  if (order.status === 'closed') return null;
+  if (order.manualSchedule !== true && workOrderIsDuplicate(order)) return null;
+  const movedToDate = (order.appointmentDate || '').trim();
+  if (movedToDate === date) return null;
+  return {
+    ...syncStopWithLiveOrder(stop, order),
+    cancelled: true,
+    movedToDate,
+    morningTextStatus:
+      stop.morningTextStatus === 'queued' ? 'none' : stop.morningTextStatus ?? 'none',
+  };
+}
+
+/** Saved truck stops whose work order has moved off this day (still need persisting). */
+export function findMovedTruckStops(
+  plan: DispatchPlan,
+  workOrders: StoredWorkOrder[],
+  offDayOrders: OffDayWorkOrders
+): Array<{ truckId: string; stop: DispatchStop }> {
+  const liveIds = new Set(workOrders.map((order) => order.id));
+  const moved: Array<{ truckId: string; stop: DispatchStop }> = [];
+  for (const truck of plan.trucks) {
+    for (const stop of truck.stops) {
+      if (liveIds.has(stop.workOrderId)) continue;
+      const patched = movedStopFor(stop, plan.date, offDayOrders);
+      if (patched) moved.push({ truckId: truck.id, stop: patched });
+    }
+  }
+  return moved;
 }
 
 export function mergeWorkOrdersIntoPlan(
   plan: DispatchPlan,
-  workOrders: StoredWorkOrder[]
+  workOrders: StoredWorkOrder[],
+  offDayOrders?: OffDayWorkOrders
 ): DispatchPlan {
+  const uniqueOrders: StoredWorkOrder[] = [];
+  const seenNumbers = new Map<string, number>();
+  for (const order of workOrders) {
+    const number = order.workOrderNumber.trim();
+    if (!number) {
+      uniqueOrders.push(order);
+      continue;
+    }
+    const existingIndex = seenNumbers.get(number);
+    if (existingIndex === undefined) {
+      seenNumbers.set(number, uniqueOrders.length);
+      uniqueOrders.push(order);
+      continue;
+    }
+    const current = uniqueOrders[existingIndex];
+    const preferNew =
+      Boolean(order.scheduleEvidenceQuote?.trim()) &&
+      !current.scheduleEvidenceQuote?.trim()
+        ? true
+        : Boolean(current.scheduleEvidenceQuote?.trim()) &&
+            !order.scheduleEvidenceQuote?.trim()
+          ? false
+          : (order.notes || '').length > (current.notes || '').length;
+    if (preferNew) uniqueOrders[existingIndex] = order;
+  }
+  workOrders = uniqueOrders.filter(
+    (order) => order.manualSchedule === true || !workOrderIsDuplicate(order)
+  );
   const assigned = collectAssignedIds(plan);
   const next: DispatchPlan = {
     ...plan,
@@ -169,20 +430,35 @@ export function mergeWorkOrdersIntoPlan(
     notReady: [...plan.notReady],
   };
 
-  const syncStop = (stop: DispatchStop, live: StoredWorkOrder): DispatchStop => ({
-    ...stop,
-    notes: live.notes || '',
-    scheduleEvidenceQuote: live.scheduleEvidenceQuote || '',
-  });
+  const syncStop = syncStopWithLiveOrder;
+  const listedInLanes = (stopId: string) =>
+    next.unassigned.some((item) => item.id === stopId) ||
+    next.notReady.some((item) => item.id === stopId);
 
-  // Drop jobs whose stored appointment date is no longer this day.
+  // Jobs whose stored appointment date is no longer this day are shown as
+  // cancelled with the new date (or dropped when closed/deleted/duplicate).
   // Move not-ready → unassigned if notes appear; unassigned → not-ready if notes cleared.
   const refreshLane = (stops: DispatchStop[], ready: boolean) =>
     stops.filter((stop) => {
       const live = workOrders.find((order) => order.id === stop.workOrderId);
-      if (!live || live.status === 'closed') return false;
+      if (!live) {
+        const moved = movedStopFor(stop, plan.date, offDayOrders);
+        if (!moved) return false;
+        if (ready) {
+          Object.assign(stop, moved);
+          return true;
+        }
+        if (!listedInLanes(stop.id)) next.unassigned.push(moved);
+        return false;
+      }
+      if (live.status === 'closed' || workOrderIsDuplicate(live)) return false;
       Object.assign(stop, syncStop(stop, live));
-      const hasNotes = workOrderHasNotes(live.notes);
+      if (stop.movedToDate !== undefined) {
+        // The job came back to this day; clear the moved marker.
+        delete stop.movedToDate;
+        stop.cancelled = false;
+      }
+      const hasNotes = workOrderIsReadyForDispatch(live);
       if (ready && !hasNotes) {
         next.notReady.push(syncStop(stop, live));
         return false;
@@ -194,15 +470,28 @@ export function mergeWorkOrdersIntoPlan(
       return true;
     });
 
-  next.trucks = next.trucks.map((truck) => ({
-    ...truck,
-    stops: truck.stops.filter((stop) => {
+  next.trucks = next.trucks.map((truck) => {
+    const kept: DispatchStop[] = [];
+    for (const stop of truck.stops) {
       const live = workOrders.find((order) => order.id === stop.workOrderId);
-      if (!live || live.status === 'closed') return false;
+      if (!live) {
+        const moved = movedStopFor(stop, plan.date, offDayOrders);
+        if (moved && !listedInLanes(stop.id)) next.unassigned.push(moved);
+        continue;
+      }
+      if (live.status === 'closed' || workOrderIsDuplicate(live)) continue;
       Object.assign(stop, syncStop(stop, live));
-      return true;
-    }),
-  }));
+      if (stop.cancelled) {
+        if (!listedInLanes(stop.id)) next.unassigned.push({ ...stop });
+        continue;
+      }
+      kept.push(stop);
+    }
+    return {
+      ...truck,
+      stops: kept.length === truck.stops.length ? kept : applyDefaultWindows(kept),
+    };
+  });
 
   next.unassigned = refreshLane(next.unassigned, true);
   next.notReady = refreshLane(next.notReady, false);
@@ -211,7 +500,7 @@ export function mergeWorkOrdersIntoPlan(
     if (workOrder.status === 'closed') continue;
     if (assigned.has(workOrder.id)) continue;
     const stop = toDispatchStop(workOrder);
-    if (workOrderHasNotes(workOrder.notes)) {
+    if (workOrderIsReadyForDispatch(workOrder)) {
       next.unassigned.push(stop);
     } else {
       next.notReady.push(stop);
@@ -245,7 +534,14 @@ function planFromSnapshotData(
       (typeof data.originAddress === 'string' && data.originAddress) ||
       DEFAULT_DISPATCH_ORIGIN,
     trucks: Array.isArray(data.trucks)
-      ? (data.trucks as DispatchTruck[])
+      ? (data.trucks as DispatchTruck[]).map((truck) => ({
+          ...truck,
+          plumberIds: Array.isArray(truck.plumberIds)
+            ? truck.plumberIds.filter(
+                (id): id is string => typeof id === 'string' && id.trim().length > 0
+              )
+            : [],
+        }))
       : createEmptyDispatchTrucks(),
     unassigned: Array.isArray(data.unassigned)
       ? (data.unassigned as DispatchStop[])
@@ -261,28 +557,28 @@ function planFromSnapshotData(
         : undefined,
   };
 
-  while (plan.trucks.length < 5) {
-    const index = plan.trucks.length;
-    plan.trucks.push({
-      id: `truck${index + 1}`,
-      name: `Truck ${index + 1}`,
-      set: false,
-      stops: [],
-    });
-  }
+  const defaults = createEmptyDispatchTrucks();
+  const byId = new Map(plan.trucks.map((truck) => [truck.id, truck]));
+  plan.trucks = [
+    ...defaults.map((slot) => byId.get(slot.id) ?? slot),
+    ...plan.trucks.filter((truck) => !defaults.some((slot) => slot.id === truck.id)),
+  ];
 
   return plan;
 }
 
 export async function getDispatchPlan(date: string): Promise<DispatchPlan> {
-  const workOrders = await listWorkOrdersForDate(date);
   const planRef = doc(db, DISPATCH_COLLECTION, date);
-  const snap = await getDoc(planRef);
+  const [workOrders, snap, plumbers] = await Promise.all([
+    listWorkOrdersForDate(date),
+    getDoc(planRef),
+    loadPlumbers(),
+  ]);
   const plan = planFromSnapshotData(
     date,
     snap.exists() ? (snap.data() as Record<string, unknown>) : undefined
   );
-  return mergeWorkOrdersIntoPlan(plan, workOrders);
+  return applyPlumberAssignmentsToPlan(mergeWorkOrdersIntoPlan(plan, workOrders), plumbers);
 }
 
 const SCHEDULING_REQUESTS_COLLECTION = 'schedulingRequests';
@@ -507,12 +803,107 @@ export function subscribeDispatchPlan(
   let cancelled = false;
   let plan: DispatchPlan | null = null;
   let workOrders: StoredWorkOrder[] | null = null;
+  let plumbers = mapPlumbers(undefined);
   let gotPlan = false;
   let gotOrders = false;
+  // Work orders the saved plan references that fell out of this day's query
+  // (date moved, closed, deleted). Watched individually so a moved job shows
+  // as "Moved to <date>" instead of vanishing.
+  const offDayOrders = new Map<string, StoredWorkOrder | null>();
+  const offDaySubscriptions = new Map<string, Unsubscribe>();
+  const persistedMoves = new Set<string>();
+  let persisting = false;
+
+  const watchOffDayOrders = () => {
+    if (!plan || !workOrders) return;
+    const liveIds = new Set(workOrders.map((order) => order.id));
+    const wanted = new Set<string>();
+    for (const id of collectAssignedIds(plan)) {
+      if (id && !liveIds.has(id)) wanted.add(id);
+    }
+    for (const [id, unsubscribe] of offDaySubscriptions) {
+      if (wanted.has(id)) continue;
+      unsubscribe();
+      offDaySubscriptions.delete(id);
+      offDayOrders.delete(id);
+    }
+    for (const id of wanted) {
+      if (offDaySubscriptions.has(id)) continue;
+      const unsubscribe = onSnapshot(
+        doc(db, WORK_ORDERS_COLLECTION, id),
+        (snap) => {
+          offDayOrders.set(
+            id,
+            snap.exists() ? mapStoredWorkOrder(snap.id, snap.data() as WorkOrderDoc) : null
+          );
+          emit();
+        },
+        (error) => {
+          if (!cancelled) onError?.(error);
+        }
+      );
+      offDaySubscriptions.set(id, unsubscribe);
+    }
+  };
+
+  // A moved job still sitting on a saved truck would be texted the old-day
+  // morning confirmation by the server; take it off the truck in Firestore.
+  const persistMovedTruckStops = () => {
+    if (persisting || !plan || !workOrders) return;
+    const moved = findMovedTruckStops(plan, workOrders, offDayOrders).filter(
+      ({ stop }) => !persistedMoves.has(`${stop.id}|${stop.movedToDate}`)
+    );
+    if (moved.length === 0) return;
+    persisting = true;
+    const basePlan = plan;
+    for (const { stop } of moved) persistedMoves.add(`${stop.id}|${stop.movedToDate}`);
+    void (async () => {
+      try {
+        const movedIds = new Set(moved.map(({ stop }) => stop.id));
+        const previousTrucks = basePlan.trucks;
+        const nextPlan: DispatchPlan = {
+          ...basePlan,
+          trucks: basePlan.trucks.map((truck) => {
+            const kept = truck.stops.filter((stop) => !movedIds.has(stop.id));
+            return kept.length === truck.stops.length
+              ? truck
+              : { ...truck, stops: applyDefaultWindows(kept) };
+          }),
+          unassigned: [
+            ...basePlan.unassigned.filter((stop) => !movedIds.has(stop.id)),
+            ...moved.map(({ stop }) => stop),
+          ],
+          notReady: basePlan.notReady.filter((stop) => !movedIds.has(stop.id)),
+        };
+        await saveDispatchPlan(nextPlan);
+        for (const { truckId, stop } of moved) {
+          await cancelPendingMorningText(basePlan.date, truckId, stop.id);
+        }
+        for (const truck of nextPlan.trucks) {
+          const previous = previousTrucks.find((item) => item.id === truck.id);
+          if (!previous || previous === truck) continue;
+          await refreshPendingMorningWindowsForTruck(basePlan.date, previous, truck);
+          await syncDispatchTruckToSchedule(basePlan.date, truck);
+        }
+      } catch (error) {
+        for (const { stop } of moved) persistedMoves.delete(`${stop.id}|${stop.movedToDate}`);
+        if (!cancelled) onError?.(error as Error);
+      } finally {
+        persisting = false;
+      }
+    })();
+  };
 
   const emit = () => {
     if (cancelled || !gotPlan || !gotOrders || !plan || !workOrders) return;
-    onChange(mergeWorkOrdersIntoPlan(plan, workOrders));
+    watchOffDayOrders();
+    persistMovedTruckStops();
+    onChange(
+      applyPlumberAssignmentsToPlan(
+        mergeWorkOrdersIntoPlan(plan, workOrders, offDayOrders),
+        plumbers
+      )
+    );
   };
 
   const unsubscribePlan = onSnapshot(
@@ -542,10 +933,24 @@ export function subscribeDispatchPlan(
     }
   );
 
+  const unsubscribePlumbers = onSnapshot(
+    PLUMBERS_DOC,
+    (snap) => {
+      plumbers = mapPlumbers(snap.data()?.people);
+      emit();
+    },
+    (error) => {
+      if (!cancelled) onError?.(error);
+    }
+  );
+
   return () => {
     cancelled = true;
     unsubscribePlan();
     unsubscribeOrders();
+    unsubscribePlumbers();
+    for (const unsubscribe of offDaySubscriptions.values()) unsubscribe();
+    offDaySubscriptions.clear();
   };
 }
 
@@ -670,7 +1075,16 @@ export async function assignUnassignedJobsToTrucks(
   }
 
   const origin = await geocodeAddress(withDistances.originAddress);
-  const jobs = sortFarthestFirst(withDistances.unassigned);
+  const jobs = sortFarthestFirst(
+    withDistances.unassigned.filter((stop) => !stop.cancelled)
+  );
+  const cancelledJobs = withDistances.unassigned.filter((stop) => stop.cancelled);
+  if (!jobs.length) {
+    return {
+      ...withDistances,
+      unassigned: cancelledJobs,
+    };
+  }
   const alreadyAssigned = openIndexes.reduce(
     (count, index) => count + trucks[index].stops.length,
     0
@@ -701,7 +1115,7 @@ export async function assignUnassignedJobsToTrucks(
 
   return {
     ...withDistances,
-    unassigned: [],
+    unassigned: cancelledJobs,
     trucks: trucks.map((truck) =>
       truck.set
         ? truck
@@ -757,6 +1171,63 @@ function morningDocId(date: string, truckId: string, stopId: string): string {
   return `dispatch-${date}-${truckId}-${stopId}`.slice(0, 700);
 }
 
+export async function cancelPendingMorningText(
+  date: string,
+  truckId: string,
+  stopId: string
+): Promise<void> {
+  const morningRef = doc(db, MORNING_COLLECTION, morningDocId(date, truckId, stopId));
+  const morningSnap = await getDoc(morningRef);
+  if (morningSnap.exists() && morningSnap.data().status === 'pending') {
+    await deleteDoc(morningRef);
+  }
+}
+
+export async function updatePendingMorningTextWindow(
+  date: string,
+  truckId: string,
+  stop: DispatchStop
+): Promise<void> {
+  const morningRef = doc(db, MORNING_COLLECTION, morningDocId(date, truckId, stop.id));
+  const morningSnap = await getDoc(morningRef);
+  if (!morningSnap.exists() || morningSnap.data().status !== 'pending') return;
+  await updateDoc(morningRef, {
+    appointmentTime: formatWindowLabel(stop.window),
+    windowStart: stop.window.start,
+    windowEnd: stop.window.end,
+    updatedAt: Timestamp.now(),
+  });
+}
+
+export async function refreshPendingMorningWindowsForTruck(
+  date: string,
+  previous: DispatchTruck | undefined,
+  next: DispatchTruck
+): Promise<void> {
+  if (!previous) return;
+  const previousById = new Map(previous.stops.map((stop) => [stop.id, stop]));
+  for (const stop of next.stops) {
+    const before = previousById.get(stop.id);
+    if (!before || windowsEqual(before.window, stop.window)) continue;
+    await updatePendingMorningTextWindow(date, next.id, stop);
+  }
+}
+
+export async function refreshPendingMorningWindowsForPlan(
+  previous: DispatchPlan,
+  next: DispatchPlan
+): Promise<void> {
+  await Promise.all(
+    next.trucks.map((truck) =>
+      refreshPendingMorningWindowsForTruck(
+        next.date,
+        previous.trucks.find((item) => item.id === truck.id),
+        truck
+      )
+    )
+  );
+}
+
 export async function queueMorningTextsForTruck(
   plan: DispatchPlan,
   truck: DispatchTruck
@@ -769,6 +1240,10 @@ export async function queueMorningTextsForTruck(
 
   const updatedStops: DispatchStop[] = [];
   for (const stop of truck.stops) {
+    if (stop.cancelled) {
+      updatedStops.push(stop);
+      continue;
+    }
     const id = morningDocId(plan.date, truck.id, stop.id);
     const ref = doc(db, MORNING_COLLECTION, id);
     await setDoc(ref, {
@@ -805,7 +1280,7 @@ export async function queueMorningTextsForTruck(
   return updatedTruck;
 }
 
-async function syncDispatchTruckToSchedule(
+export async function syncDispatchTruckToSchedule(
   date: string,
   truck: DispatchTruck
 ): Promise<void> {
@@ -819,11 +1294,14 @@ async function syncDispatchTruckToSchedule(
         stops: [],
       }));
 
-  const mappedStops = truck.stops.map((stop) => ({
+  const mappedStops = truck.stops
+    .filter((stop) => !stop.cancelled)
+    .map((stop) => ({
     id: stop.workOrderId,
     workOrderNumber: stop.workOrderNumber,
     customerName: stop.customerName,
     phone: stop.phone,
+    phones: stop.phones || [],
     address: stop.address,
     jobType: stop.jobType,
     notes: stop.notes,
@@ -840,12 +1318,20 @@ async function syncDispatchTruckToSchedule(
       return {
         ...item,
         name: truck.name,
+        driver: truck.driver,
+        plumberIds: truck.plumberIds || [],
         stops: mappedStops,
       };
     }
   );
   if (!found) {
-    trucks.push({ id: truck.id, name: truck.name, stops: mappedStops });
+    trucks.push({
+      id: truck.id,
+      name: truck.name,
+      driver: truck.driver,
+      plumberIds: truck.plumberIds || [],
+      stops: mappedStops,
+    });
   }
 
   await setDoc(
@@ -883,65 +1369,50 @@ export async function cancelMorningTextsForTruck(
   };
 }
 
+async function persistRemovedStop(
+  plan: DispatchPlan,
+  stopId: string,
+  truckId: string | null
+): Promise<DispatchPlan> {
+  if (truckId) {
+    await cancelPendingMorningText(plan.date, truckId, stopId);
+  }
+  const next = planWithoutStop(plan, stopId);
+  await saveDispatchPlan(next);
+  if (truckId) {
+    const previousTruck = plan.trucks.find((item) => item.id === truckId);
+    const truck = next.trucks.find((item) => item.id === truckId);
+    if (truck) {
+      await refreshPendingMorningWindowsForTruck(plan.date, previousTruck, truck);
+      await syncDispatchTruckToSchedule(plan.date, truck);
+    }
+  }
+  return next;
+}
+
 /**
  * Removes a job from the dispatch plan and deletes its work order so it is not
  * re-imported on the next board refresh. Pending morning texts for that stop are canceled.
+ * If the same work order is still on another truck, only this stop is removed.
  */
 export async function deleteDispatchJob(
   plan: DispatchPlan,
   stopId: string
 ): Promise<DispatchPlan> {
-  let removed: DispatchStop | null = null;
-  let truckId: string | null = null;
-
-  if (plan.unassigned.some((stop) => stop.id === stopId)) {
-    removed = plan.unassigned.find((stop) => stop.id === stopId) || null;
-  } else if (plan.notReady.some((stop) => stop.id === stopId)) {
-    removed = plan.notReady.find((stop) => stop.id === stopId) || null;
-  } else {
-    for (const truck of plan.trucks) {
-      const stop = truck.stops.find((item) => item.id === stopId);
-      if (stop) {
-        removed = stop;
-        truckId = truck.id;
-        break;
-      }
-    }
-  }
-
-  if (!removed) {
+  const found = findStopOnPlan(plan, stopId);
+  if (!found) {
     throw new Error('That job is no longer on the board.');
   }
 
-  if (truckId) {
-    const morningRef = doc(db, MORNING_COLLECTION, morningDocId(plan.date, truckId, stopId));
-    const morningSnap = await getDoc(morningRef);
-    if (morningSnap.exists() && morningSnap.data().status === 'pending') {
-      await deleteDoc(morningRef);
+  if (!workOrderHasOtherStops(plan, found.stop)) {
+    const workOrderRef = doc(db, WORK_ORDERS_COLLECTION, found.stop.workOrderId || stopId);
+    const workOrderSnap = await getDoc(workOrderRef);
+    if (workOrderSnap.exists()) {
+      await deleteDoc(workOrderRef);
     }
   }
 
-  const workOrderRef = doc(db, WORK_ORDERS_COLLECTION, removed.workOrderId || stopId);
-  const workOrderSnap = await getDoc(workOrderRef);
-  if (workOrderSnap.exists()) {
-    await deleteDoc(workOrderRef);
-  }
-
-  const next: DispatchPlan = {
-    ...plan,
-    unassigned: plan.unassigned.filter((stop) => stop.id !== stopId),
-    notReady: plan.notReady.filter((stop) => stop.id !== stopId),
-    trucks: plan.trucks.map((truck) => {
-      if (!truck.stops.some((stop) => stop.id === stopId)) return truck;
-      return {
-        ...truck,
-        stops: applyDefaultWindows(truck.stops.filter((stop) => stop.id !== stopId)),
-      };
-    }),
-  };
-
-  await saveDispatchPlan(next);
-  return next;
+  return persistRemovedStop(plan, stopId, found.truckId);
 }
 
 /**
@@ -952,30 +1423,109 @@ export async function closeDispatchJob(
   plan: DispatchPlan,
   stopId: string
 ): Promise<DispatchPlan> {
-  const stop =
-    plan.unassigned.find((item) => item.id === stopId) ||
-    plan.notReady.find((item) => item.id === stopId) ||
-    null;
-
-  if (!stop) {
-    throw new Error('Only Ready / Unassigned or Not Ready jobs can be closed here.');
+  const found = findStopOnPlan(plan, stopId);
+  if (!found) {
+    throw new Error('That job is no longer on the board.');
   }
 
-  const workOrderRef = doc(db, WORK_ORDERS_COLLECTION, stop.workOrderId || stopId);
-  const workOrderSnap = await getDoc(workOrderRef);
-  if (workOrderSnap.exists()) {
-    await updateDoc(workOrderRef, {
-      status: 'closed',
-      closedAt: Timestamp.now(),
-      updatedAt: Timestamp.now(),
-    });
+  if (!workOrderHasOtherStops(plan, found.stop)) {
+    const workOrderRef = doc(db, WORK_ORDERS_COLLECTION, found.stop.workOrderId || stopId);
+    const workOrderSnap = await getDoc(workOrderRef);
+    if (workOrderSnap.exists()) {
+      await updateDoc(workOrderRef, {
+        status: 'closed',
+        closedAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      });
+    }
   }
 
-  const next: DispatchPlan = {
+  return persistRemovedStop(plan, stopId, found.truckId);
+}
+
+export function mapStopOnPlan(
+  plan: DispatchPlan,
+  stopId: string,
+  updater: (stop: DispatchStop) => DispatchStop
+): DispatchPlan {
+  return {
     ...plan,
-    unassigned: plan.unassigned.filter((item) => item.id !== stopId),
-    notReady: plan.notReady.filter((item) => item.id !== stopId),
+    unassigned: plan.unassigned.map((stop) => (stop.id === stopId ? updater(stop) : stop)),
+    notReady: plan.notReady.map((stop) => (stop.id === stopId ? updater(stop) : stop)),
+    trucks: plan.trucks.map((truck) => ({
+      ...truck,
+      stops: truck.stops.map((stop) => (stop.id === stopId ? updater(stop) : stop)),
+    })),
   };
+}
+
+function findStopOnPlan(
+  plan: DispatchPlan,
+  stopId: string
+): { stop: DispatchStop; truckId: string | null } | null {
+  const unassigned = plan.unassigned.find((item) => item.id === stopId);
+  if (unassigned) return { stop: unassigned, truckId: null };
+  const notReady = plan.notReady.find((item) => item.id === stopId);
+  if (notReady) return { stop: notReady, truckId: null };
+  for (const truck of plan.trucks) {
+    const stop = truck.stops.find((item) => item.id === stopId);
+    if (stop) return { stop, truckId: truck.id };
+  }
+  return null;
+}
+
+/**
+ * Marks a job cancelled. If it was on a truck, it is moved to Ready /
+ * Unassigned and pending morning texts for that stop are dropped.
+ */
+export async function setDispatchJobCancelled(
+  plan: DispatchPlan,
+  stopId: string,
+  cancelled: boolean
+): Promise<DispatchPlan> {
+  const found = findStopOnPlan(plan, stopId);
+  if (!found) {
+    throw new Error('That job is no longer on the board.');
+  }
+
+  const patched: DispatchStop = {
+    ...found.stop,
+    cancelled,
+    morningTextStatus:
+      cancelled && found.stop.morningTextStatus === 'queued'
+        ? 'none'
+        : found.stop.morningTextStatus,
+  };
+
+  if (cancelled && workOrderHasOtherStops(plan, found.stop)) {
+    return persistRemovedStop(plan, stopId, found.truckId);
+  }
+
+  if (cancelled && found.truckId) {
+    await cancelPendingMorningText(plan.date, found.truckId, stopId);
+    const next: DispatchPlan = {
+      ...plan,
+      trucks: plan.trucks.map((truck) => {
+        if (truck.id !== found.truckId) return truck;
+        return {
+          ...truck,
+          stops: applyDefaultWindows(truck.stops.filter((stop) => stop.id !== stopId)),
+        };
+      }),
+      unassigned: [...plan.unassigned.filter((stop) => stop.id !== stopId), patched],
+      notReady: plan.notReady.filter((stop) => stop.id !== stopId),
+    };
+    await saveDispatchPlan(next);
+    const previousTruck = plan.trucks.find((item) => item.id === found.truckId);
+    const truck = next.trucks.find((item) => item.id === found.truckId);
+    if (truck) {
+      await refreshPendingMorningWindowsForTruck(plan.date, previousTruck, truck);
+      await syncDispatchTruckToSchedule(plan.date, truck);
+    }
+    return next;
+  }
+
+  const next = mapStopOnPlan(plan, stopId, () => patched);
   await saveDispatchPlan(next);
   return next;
 }
@@ -1002,6 +1552,7 @@ export async function createMockDispatchJob(date: string): Promise<DispatchStop>
       workOrderNumber,
       customerName: stop.customerName,
       phone: stop.phone,
+      phones: stop.phones || ['+18609643025'],
       address: stop.address,
       jobType: stop.jobType,
       appointmentDate: date,
@@ -1011,6 +1562,100 @@ export async function createMockDispatchJob(date: string): Promise<DispatchStop>
       smsConsent: true,
       status: 'unscheduled',
       mock: true,
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    },
+    { merge: true }
+  );
+
+  return stop;
+}
+
+export type ManualDispatchJobInput = {
+  workOrderNumber: string;
+  customerName: string;
+  phone: string;
+  address: string;
+  jobType: string;
+  appointmentDate: string;
+  appointmentTime: string;
+  notes: string;
+  smsConsent: boolean;
+};
+
+function normalizeDispatchPhone(value: string): string {
+  const trimmed = value.trim();
+  const digits = trimmed.replace(/\D/g, '');
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  return trimmed;
+}
+
+export function validateManualDispatchJob(input: ManualDispatchJobInput): string | null {
+  const missing: string[] = [];
+  if (!input.customerName.trim()) missing.push('customer name');
+  if (!input.phone.trim()) missing.push('phone');
+  if (!input.address.trim()) missing.push('address');
+  if (!input.jobType.trim()) missing.push('job type');
+  if (!input.appointmentDate.trim()) missing.push('appointment date');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.appointmentDate.trim())) {
+    return 'Appointment date must use YYYY-MM-DD.';
+  }
+  if (input.appointmentTime && !/^\d{2}:\d{2}(?::\d{2})?$/.test(input.appointmentTime.trim())) {
+    return 'Appointment time must use HH:MM (24-hour).';
+  }
+  if (missing.length > 0) {
+    return `Missing: ${missing.join(', ')}.`;
+  }
+  return null;
+}
+
+/** Creates a dispatcher-entered work order and returns the dispatch stop. */
+export async function createManualDispatchJob(
+  input: ManualDispatchJobInput
+): Promise<DispatchStop> {
+  const error = validateManualDispatchJob(input);
+  if (error) throw new Error(error);
+
+  const appointmentDate = input.appointmentDate.trim();
+  const stamp = Date.now().toString().slice(-4);
+  const workOrderNumber =
+    input.workOrderNumber.trim() ||
+    `MAN-${appointmentDate.replace(/-/g, '')}-${stamp}`;
+  const safe = workOrderNumber.replace(/[^a-zA-Z0-9_-]/g, '-');
+  const workOrderId = `manual-${appointmentDate}-${safe}`.slice(0, 120);
+  const phones = parseCustomerPhones(input.phone);
+  const phone = phones[0] || normalizeDispatchPhone(input.phone);
+  const notes = input.notes.trim();
+  const stop = toDispatchStop({
+    id: workOrderId,
+    workOrderNumber,
+    customerName: input.customerName.trim(),
+    phone,
+    phones,
+    address: input.address.trim(),
+    jobType: input.jobType.trim(),
+    notes,
+    sourceFileName: 'manual-dispatch',
+  });
+
+  await setDoc(
+    doc(db, WORK_ORDERS_COLLECTION, workOrderId),
+    {
+      workOrderNumber,
+      customerName: stop.customerName,
+      phone: stop.phone,
+      phones: stop.phones || phones,
+      address: stop.address,
+      jobType: stop.jobType,
+      appointmentDate,
+      appointmentTime: input.appointmentTime.trim().slice(0, 5),
+      notes,
+      sourceFileName: 'manual-dispatch',
+      smsConsent: input.smsConsent,
+      smsConsentMethod: input.smsConsent ? 'verbal_dispatch_entry' : 'not_provided',
+      source: 'manual',
+      status: 'unscheduled',
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
     },

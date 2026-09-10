@@ -42,10 +42,15 @@ button {
   font-size: 0.9rem;
 }
 
-button:hover {
+button:hover:not(:disabled) {
   background-color: var(--border);
   border-color: var(--accent);
   color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 button:active {

@@ -1,0 +1,254 @@
+.phone-sms {
+  padding: 1.25rem 1.5rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 58rem;
+}
+
+.phone-sms__toolbar h2 {
+  color: var(--accent);
+  font-size: 1.15rem;
+  margin-bottom: 0.35rem;
+}
+
+.phone-sms__toolbar p {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  max-width: 46rem;
+}
+
+.phone-sms__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: 1rem;
+}
+
+.phone-sms__card {
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  padding: 1rem;
+}
+
+.phone-sms__card h3 {
+  color: var(--accent);
+  font-size: 0.95rem;
+  margin-bottom: 0.75rem;
+}
+
+.phone-sms__status {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+}
+
+.phone-sms__status dt {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.phone-sms__status dd {
+  margin: 0 0 0.45rem;
+}
+
+.phone-sms__online {
+  color: var(--success);
+}
+
+.phone-sms__offline {
+  color: var(--text-secondary);
+}
+
+.phone-sms__form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.phone-sms__form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.phone-sms__form input,
+.phone-sms__form textarea {
+  font: inherit;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.phone-sms__form textarea {
+  min-height: 4.5rem;
+  resize: vertical;
+}
+
+.phone-sms__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+.phone-sms__primary {
+  background: var(--accent);
+  color: var(--bg-primary);
+  border-color: var(--accent);
+}
+
+.phone-sms__token {
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--accent);
+  background: rgba(226, 183, 20, 0.08);
+  word-break: break-all;
+  font-size: 0.78rem;
+}
+
+.phone-sms__token code {
+  color: var(--accent);
+}
+
+.phone-sms__error {
+  padding: 0.65rem 0.85rem;
+  font-size: 0.85rem;
+  background: rgba(202, 71, 84, 0.15);
+  border: 1px solid var(--error);
+  color: #ffb4b4;
+}
+
+.phone-sms__ok {
+  padding: 0.65rem 0.85rem;
+  font-size: 0.85rem;
+  background: rgba(126, 170, 146, 0.12);
+  border: 1px solid var(--success);
+  color: var(--success);
+}
+
+.phone-sms__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  max-height: 22rem;
+  overflow: auto;
+}
+
+.phone-sms__row {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+}
+
+.phone-sms__row-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.55rem;
+}
+
+.phone-sms__who-button {
+  flex-shrink: 0;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.68rem;
+  border-color: var(--accent);
+  color: var(--accent);
+  background: transparent;
+  cursor: pointer;
+}
+
+.phone-sms__who-button:hover {
+  background: rgba(226, 183, 20, 0.12);
+}
+
+.phone-sms__who {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 0.45rem;
+}
+
+.phone-sms__who-card {
+  display: grid;
+  grid-template-columns: 6.5rem 1fr;
+  gap: 0.2rem 0.55rem;
+  margin: 0;
+  padding: 0.5rem 0.55rem;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  font-size: 0.75rem;
+}
+
+.phone-sms__who-card dt {
+  color: var(--text-secondary);
+}
+
+.phone-sms__who-card dd {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.phone-sms__who-empty {
+  margin: 0.4rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.phone-sms__row strong {
+  color: var(--accent);
+  font-size: 0.82rem;
+}
+
+.phone-sms__row p {
+  margin-top: 0.3rem;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+}
+
+.phone-sms__pics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.45rem;
+}
+
+.phone-sms__pics img {
+  width: 7.5rem;
+  height: 7.5rem;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  background: #111;
+}
+
+.phone-sms__row small {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  margin-top: 0.25rem;
+}
+
+.phone-sms__muted {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.phone-sms__steps {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  padding-left: 1.1rem;
+}
+
+.phone-sms__steps li + li {
+  margin-top: 0.45rem;
+}
+
+.phone-sms__steps code {
+  color: var(--accent);
+  word-break: break-all;
+}

@@ -26,10 +26,12 @@ export async function finishPlaudOAuth(input: {
 export async function connectPlaudWebSession(input: {
   token: string;
   apiBase?: string;
+  cookie?: string;
 }): Promise<{ connected: boolean; mode?: string }> {
   const call = httpsCallable<typeof input, { connected: boolean; mode?: string }>(
     functions,
-    'connectPlaudWebSession'
+    'connectPlaudWebSession',
+    { timeout: 120 * 1000 }
   );
   const result = await call(input);
   return result.data;
@@ -48,6 +50,14 @@ export async function syncPlaudCalls(input: {
   date?: string;
   days?: number;
   allTime?: boolean;
+  files?: Array<{
+    id: string;
+    name?: string;
+    created_at?: string;
+    start_at?: string;
+    duration?: number;
+    serial_number?: string;
+  }>;
 }): Promise<PlaudSyncSummary> {
   const call = httpsCallable<typeof input, PlaudSyncSummary>(functions, 'syncPlaudCalls', {
     timeout: input.allTime ? 30 * 60 * 1000 : 9 * 60 * 1000,
@@ -105,6 +115,48 @@ export async function listPlaudCalls(input: {
   );
   const result = await call(input);
   return result.data;
+}
+
+export async function getPlaudCallAudioUrl(callId: string): Promise<{
+  url: string;
+  filename: string;
+  contentType: string;
+}> {
+  const call = httpsCallable<{ callId: string }, { url: string; filename: string; contentType: string }>(
+    functions,
+    'getPlaudCallAudioUrl',
+    { timeout: 60 * 1000 }
+  );
+  const result = await call({ callId });
+  return result.data;
+}
+
+export function plaudCallAudioProxyUrl(callId: string, download = false): string {
+  const params = new URLSearchParams({ callId });
+  if (download) params.set('download', '1');
+  return `https://us-central1-${firebaseConfig.projectId}.cloudfunctions.net/plaudCallAudio?${params}`;
+}
+
+async function blobFromUrl(url: string): Promise<Blob> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(detail.trim().slice(0, 180) || `Could not download the recording (${response.status}).`);
+  }
+  return response.blob();
+}
+
+export async function downloadPlaudCallAudio(callId: string): Promise<{ blob: Blob; filename: string }> {
+  let filename = 'call.mp3';
+  try {
+    const link = await getPlaudCallAudioUrl(callId);
+    filename = link.filename || filename;
+    const blob = await blobFromUrl(link.url);
+    return { blob, filename };
+  } catch {
+    const blob = await blobFromUrl(plaudCallAudioProxyUrl(callId, true));
+    return { blob, filename };
+  }
 }
 
 export async function askPlaudCalls(date: string, question: string): Promise<string> {

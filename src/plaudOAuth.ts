@@ -8,7 +8,7 @@ export type PlaudOAuthPending = {
   redirectUri: string;
 };
 
-let finishLock = false;
+let finishPromise: Promise<void> | null = null;
 
 function base64Url(bytes: Uint8Array): string {
   let binary = '';
@@ -28,7 +28,7 @@ async function sha256Base64Url(value: string): Promise<string> {
   return base64Url(new Uint8Array(hash));
 }
 
-export async function beginPlaudOAuth(origin = window.location.origin): Promise<string> {
+export async function beginPlaudOAuth(): Promise<string> {
   const verifier = randomUrlToken(32);
   const state = randomUrlToken(16);
   let redirectUri = '';
@@ -64,6 +64,27 @@ export async function beginPlaudOAuth(origin = window.location.origin): Promise<
   return url.toString();
 }
 
+export type PlaudOAuthCallback = {
+  code: string;
+  state: string;
+  error: string;
+};
+
+export function capturePlaudOAuthCallback(
+  pathname = window.location.pathname,
+  search = window.location.search
+): PlaudOAuthCallback | null {
+  const params = new URLSearchParams(search);
+  const path = pathname.replace(/\/$/, '') || '/';
+  const code = params.get('code') || '';
+  const state = params.get('state') || '';
+  const error = params.get('error_description') || params.get('error') || '';
+  const isCallbackPath = path === '/auth/callback' || path === '/plaud/callback';
+  if (!isCallbackPath && !code && !state && !error) return null;
+  if (!code && !state && !error) return null;
+  return { code, state, error };
+}
+
 export function isPlaudOAuthCallbackPath(pathname = window.location.pathname): boolean {
   const path = pathname.replace(/\/$/, '') || '/';
   return path === '/auth/callback' || path === '/plaud/callback';
@@ -90,10 +111,9 @@ export function clearPlaudOAuthPending() {
   localStorage.removeItem(PENDING_KEY);
 }
 
-export function claimPlaudOAuthFinish(): boolean {
-  if (finishLock) return false;
-  finishLock = true;
-  return true;
+export function runPlaudOAuthFinishOnce(run: () => Promise<void>): Promise<void> {
+  if (!finishPromise) finishPromise = run();
+  return finishPromise;
 }
 
 export function formatPlaudCallableError(err: unknown): string {
@@ -106,16 +126,21 @@ export function formatPlaudCallableError(err: unknown): string {
       ? (err as { details?: unknown }).details
       : undefined;
   const message = err instanceof Error ? err.message : String(err);
-  if (
-    code.includes('not-found') ||
-    message === 'internal' ||
-    /NOT_FOUND|not found/i.test(message)
-  ) {
+  if (code.includes('not-found') || /NOT_FOUND|not found/i.test(message)) {
     return 'Plaud sign-in is not on the server yet. Deploy functions, then click Sign in with Plaud again.';
   }
-  if (typeof details === 'string' && details.trim()) return details;
-  if (/400/.test(message)) {
-    return 'Plaud rejected the sign-in. Click Sign in with Plaud again from this same tab.';
+  if (code.includes('unavailable') || code.includes('deadline')) {
+    return 'Could not reach the NJ Plumbing server. Wait a few seconds, then click Sign in with Plaud again.';
   }
-  return message.replace(/^(INTERNAL|UNKNOWN):?\s*/i, '') || 'Plaud sign-in failed.';
+  if (/fetch failed|failed to fetch|could not reach plaud/i.test(message)) {
+    return 'Google Cloud could not talk to Plaud from the server. Your login was still captured if you stayed on the Plaud home page — click Sign in with Plaud once more.';
+  }
+  if (/-3901|token type does not match/i.test(message)) {
+    return 'Plaud rejected the saved login type. Click Reconnect Plaud, sign in at web.plaud.ai, and wait until this app connects.';
+  }
+  if (code.includes('internal') || /^internal$/i.test(message.trim())) {
+    return 'Plaud failed on the server. Try Sync this day again, or click Reconnect Plaud if it keeps failing.';
+  }
+  if (typeof details === 'string' && details.trim()) return details;
+  return message.replace(/^(INTERNAL|UNKNOWN|FAILED-PRECONDITION):?\s*/i, '') || 'Plaud sign-in failed.';
 }

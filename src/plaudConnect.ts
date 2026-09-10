@@ -36,6 +36,22 @@ export function takePlaudConnectTokenFromLocation(): string {
   return sessionStorage.getItem(STORAGE_KEY) || '';
 }
 
+export function plaudJwtTyp(token: string): string {
+  try {
+    const part = token.split('.')[1] || '';
+    const padded = part.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((part.length + 3) % 4);
+    const payload = JSON.parse(atob(padded)) as { typ?: unknown };
+    return String(payload.typ || '').toUpperCase();
+  } catch {
+    return '';
+  }
+}
+
+export function isPlaudWebSessionToken(token: string): boolean {
+  const typ = plaudJwtTyp(token);
+  return typ === 'WT' || typ === 'UT';
+}
+
 export function consumePlaudConnectToken(): string {
   takePlaudConnectTokenFromLocation();
   const token = sessionStorage.getItem(STORAGE_KEY) || '';

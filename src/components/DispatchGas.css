@@ -1,0 +1,146 @@
+.dispatch-gas {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+
+.dispatch-gas__summary {
+  display: grid;
+  gap: 0.25rem;
+  min-width: min(100%, 28rem);
+}
+
+.dispatch-gas__summary strong {
+  color: var(--accent);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.dispatch-gas__summary span {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.dispatch-gas__summary span:first-of-type {
+  color: var(--text-primary);
+  font-size: 0.92rem;
+}
+
+.dispatch-gas__stations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.dispatch-gas__stations button {
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.dispatch-gas__stations button:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.dispatch-gas__station--selected {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.dispatch-gas__settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.45rem;
+}
+
+.dispatch-gas__settings label,
+.dispatch-gas-line__fields label {
+  display: grid;
+  gap: 0.2rem;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dispatch-gas__settings input,
+.dispatch-gas-line__fields input {
+  width: 5.5rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}
+
+.dispatch-gas__settings button {
+  padding: 0.4rem 0.65rem;
+  font-size: 0.78rem;
+}
+
+.dispatch-gas-line {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0 0 0.55rem;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+}
+
+.dispatch-gas-line p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.dispatch-gas-line--empty {
+  border: 0;
+  padding: 0;
+  background: none;
+}
+
+.dispatch-gas-line--ok {
+  border-color: #2f6f4a;
+}
+
+.dispatch-gas-line--ok p {
+  color: #8fd4a8;
+}
+
+.dispatch-gas-line--fill {
+  border-color: #8a7430;
+}
+
+.dispatch-gas-line--fill p {
+  color: #e2c36d;
+}
+
+.dispatch-gas-line--high {
+  border-color: #a14a4a;
+}
+
+.dispatch-gas-line--high p {
+  color: #f0a0a0;
+}
+
+.dispatch-gas-line__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}

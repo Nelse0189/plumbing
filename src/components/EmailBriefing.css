@@ -1,0 +1,772 @@
+.email-brief {
+  padding: 1.25rem 1.5rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 72rem;
+}
+
+.email-brief__toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.email-brief__toolbar h2 {
+  color: var(--accent);
+  font-size: 1.15rem;
+  margin-bottom: 0.35rem;
+}
+
+.email-brief__toolbar p {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  max-width: 38rem;
+}
+
+.email-brief__primary {
+  background: var(--accent);
+  color: var(--bg-primary);
+  border-color: var(--accent);
+}
+
+.email-brief__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.email-brief__accounts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.email-brief__accounts li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+}
+
+.email-brief__accounts small {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  margin-top: 0.2rem;
+}
+
+.email-brief__accounts-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.email-brief__accounts-bar button.is-active {
+  background: var(--accent);
+  color: var(--bg-primary);
+  border-color: var(--accent);
+}
+
+.email-brief__inbox {
+  display: grid;
+  grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr);
+  min-height: 34rem;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.email-brief__inbox-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: end;
+}
+
+.email-brief__inbox-tools label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.email-brief__inbox-tools select,
+.email-brief__search input {
+  min-width: 14rem;
+}
+
+.email-brief__toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.2rem;
+}
+
+.email-brief__toggle input[type='checkbox'] {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.email-brief__search {
+  position: relative;
+}
+
+.email-brief__suggest {
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  right: 0;
+  top: calc(100% - 0.1rem);
+  list-style: none;
+  margin: 0;
+  padding: 0.2rem 0;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  max-height: 14rem;
+  overflow: auto;
+}
+
+.email-brief__suggest button {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.45rem 0.65rem;
+}
+
+.email-brief__suggest small {
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+}
+
+.email-brief__inbox-list {
+  overflow: auto;
+  max-height: 70vh;
+  border-right: 1px solid var(--border);
+}
+
+.email-brief__inbox-list > .email-brief__muted {
+  padding: 0.85rem;
+}
+
+.email-brief__msg {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.15rem 0.75rem;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.65rem 1rem 0.65rem 0.75rem;
+}
+
+.email-brief__msg strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.email-brief__msg em,
+.email-brief__msg small {
+  grid-column: 1 / -1;
+  font-style: normal;
+}
+
+.email-brief__msg em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.email-brief__msg small {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.email-brief__msg span {
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  white-space: nowrap;
+  align-self: start;
+}
+
+.email-brief__msg--unread strong,
+.email-brief__msg--unread em {
+  color: var(--accent);
+}
+
+.email-brief__msg--selected {
+  background: rgba(226, 183, 20, 0.12);
+}
+
+.email-brief__inbox-read {
+  padding: 0.9rem 1rem;
+  overflow: auto;
+  max-height: 70vh;
+  display: grid;
+  align-content: start;
+  gap: 0.55rem;
+}
+
+.email-brief__wo-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.email-brief__wo-refs button {
+  background: rgba(226, 183, 20, 0.12);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* AI reply pipeline panel under the open message. */
+.email-brief__reply {
+  display: grid;
+  gap: 0.55rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+  margin-top: 0.25rem;
+}
+
+.email-brief__reply-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.email-brief__reply-bar a {
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+
+.email-brief__file-pick {
+  cursor: pointer;
+  padding: 0.35rem 0.7rem;
+  border: 1px dashed var(--border);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.email-brief__file-pick:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.email-brief__link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--accent);
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.email-brief__reply-evidence pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.email-brief__correspondent {
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  padding: 0.45rem 0.65rem;
+}
+
+.email-brief__correspondent summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.email-brief__correspondent pre {
+  margin: 0.5rem 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.email-brief__reply-matches {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.email-brief__reply-match {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  background: var(--bg-primary);
+  font-size: 0.82rem;
+}
+
+.email-brief__reply-match small {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.email-brief__reply-match.is-matched {
+  border-left-color: #4caf7d;
+}
+
+.email-brief__reply-match.is-ambiguous {
+  border-left-color: var(--accent);
+}
+
+.email-brief__reply-match.is-missing {
+  border-left-color: var(--error);
+}
+
+.email-brief__reply-subject {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.email-brief__reply-subject input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.email-brief__reply-text {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.email-brief__reply-unresolved h4,
+.email-brief__reply-evidence h4 {
+  margin: 0.4rem 0 0.2rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.email-brief__reply-unresolved ul,
+.email-brief__reply-evidence ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+}
+
+.email-brief__reply-unresolved {
+  border: 1px solid var(--accent);
+  background: rgba(226, 183, 20, 0.08);
+  padding: 0.5rem 0.7rem;
+}
+
+.email-brief__reply-evidence {
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  padding: 0.5rem 0.7rem;
+  font-size: 0.82rem;
+}
+
+.email-brief__reply-evidence p {
+  margin: 0 0 0.3rem;
+}
+
+.email-brief__reply-evidence small {
+  color: var(--text-secondary);
+}
+
+.email-brief__pdf {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+}
+
+.email-brief__pdf-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.email-brief__pdf-panel {
+  position: relative;
+  z-index: 1;
+  width: min(960px, calc(100vw - 2rem));
+  height: min(88vh, 920px);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+
+.email-brief__pdf-panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.email-brief__pdf-panel iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #111;
+}
+
+.email-brief__inbox-read header h3 {
+  color: var(--accent);
+  font-size: 1rem;
+  margin: 0 0 0.35rem;
+}
+
+.email-brief__inbox-read header p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.email-brief__inbox-read pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 800px) {
+  .email-brief__inbox {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .email-brief__inbox-list,
+  .email-brief__inbox-read {
+    max-height: 24rem;
+  }
+
+  .email-brief__inbox-list {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+.email-brief__status {
+  padding: 0.65rem 0.85rem;
+  font-size: 0.85rem;
+  background: rgba(126, 170, 146, 0.12);
+  border: 1px solid var(--success);
+  color: var(--success);
+}
+
+.email-brief__card {
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  padding: 0.9rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.email-brief__card h3,
+.email-brief__result h3 {
+  color: var(--accent);
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+.email-brief__card textarea,
+.email-brief__paste {
+  font: inherit;
+  width: 100%;
+  min-height: 5.5rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  resize: vertical;
+}
+
+.email-brief__paste {
+  min-height: 12rem;
+}
+
+.email-brief__drop {
+  border: 1px dashed var(--border);
+  padding: 0.7rem;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.email-brief__drop--active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.email-brief__muted {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  margin: 0;
+}
+
+.email-brief__error {
+  padding: 0.65rem 0.85rem;
+  font-size: 0.85rem;
+  background: rgba(202, 71, 84, 0.15);
+  border: 1px solid var(--error);
+  color: #ffb4b4;
+}
+
+.email-brief__result {
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  padding: 0.95rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.email-brief__result p,
+.email-brief__result li {
+  font-size: 0.88rem;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.email-brief__result h4 {
+  margin: 0.4rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.email-brief__result ul {
+  margin: 0;
+  padding-left: 1.15rem;
+}
+
+.email-brief__items {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.35rem;
+}
+
+.email-brief__item {
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  padding: 0.7rem 0.8rem;
+}
+
+.email-brief__item--high {
+  border-color: var(--error);
+}
+
+.email-brief__item header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.email-brief__item strong {
+  color: var(--accent);
+}
+
+.email-brief__item span,
+.email-brief__item small {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.email-brief__action {
+  color: var(--text-secondary);
+}
+
+.email-brief__context-slider {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0 0 0.85rem;
+  max-width: 28rem;
+}
+
+.email-brief__context-slider span {
+  font-size: 0.8rem;
+  color: var(--text-primary);
+}
+
+.email-brief__context-slider strong {
+  color: var(--accent);
+}
+
+.email-brief__context-slider input[type='range'] {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.email-brief__context-slider input[type='range']:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.email-brief__context-slider small {
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+}
+
+.email-brief__chat-history {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 12rem;
+  overflow: auto;
+  margin: 0 0 0.75rem;
+}
+
+.email-brief__chat-history-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+}
+
+.email-brief__chat-history-item.is-active {
+  border-color: var(--accent);
+}
+
+.email-brief__chat-history-item button {
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.email-brief__chat-history-item button:first-child {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.45rem 0.65rem;
+  min-width: 0;
+}
+
+.email-brief__chat-history-item strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.email-brief__chat-history-item small {
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+}
+
+.email-brief__chat-history-delete {
+  padding: 0 0.7rem;
+  color: var(--text-secondary);
+}
+
+.email-brief__chat {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.email-brief__chat-log {
+  display: grid;
+  gap: 0.45rem;
+  max-height: 22rem;
+  overflow: auto;
+  padding: 0.2rem 0;
+}
+
+.email-brief__bubble {
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  padding: 0.55rem 0.7rem;
+}
+
+.email-brief__bubble--assistant {
+  border-color: var(--accent);
+}
+
+.email-brief__bubble small {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  margin-bottom: 0.2rem;
+}
+
+.email-brief__cost {
+  margin-top: 0.35rem;
+  margin-bottom: 0;
+}
+
+.email-brief__bubble p {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.email-brief__pins {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.email-brief__pin {
+  font-size: 0.72rem;
+  padding: 0.25rem 0.5rem;
+  background: rgba(226, 183, 20, 0.12);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.email-brief__suggest--chat {
+  top: auto;
+  bottom: calc(100% - 0.15rem);
+}
+
+.email-brief__extra {
+  min-height: 4rem;
+}

@@ -1,0 +1,406 @@
+.plumber-board {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem 1rem 2.5rem;
+  max-width: 52rem;
+  margin: 0 auto;
+}
+
+.plumber-board__lede {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.plumber-board__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.plumber-board__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.plumber-board__filters button.is-on {
+  background: var(--accent);
+  color: var(--bg-primary);
+  border-color: var(--accent);
+}
+
+.plumber-board__error {
+  padding: 0.65rem 0.85rem;
+  border-radius: 4px;
+  background: rgba(202, 71, 84, 0.15);
+  border: 1px solid var(--error);
+  color: #ffb4b4;
+  font-size: 0.85rem;
+}
+
+.plumber-board--edit {
+  max-width: 64rem;
+}
+
+.plumber-board__status {
+  padding: 0.65rem 0.85rem;
+  border-radius: 4px;
+  background: rgba(126, 170, 146, 0.12);
+  border: 1px solid var(--success);
+  color: var(--success);
+  font-size: 0.85rem;
+}
+
+.plumber-board__empty {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.plumber-truck {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+.plumber-truck__header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.65rem;
+  align-items: flex-start;
+}
+
+.plumber-truck__header h2 {
+  margin: 0;
+  color: var(--accent);
+  font-size: 1.05rem;
+}
+
+.plumber-truck__header p {
+  margin: 0.2rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.plumber-truck__phones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.plumber-truck__phones a,
+.plumber-truck__phones span {
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  text-decoration: none;
+}
+
+.plumber-truck__phones a:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.plumber-truck__assign {
+  display: grid;
+  gap: 0.4rem;
+  min-width: min(100%, 16rem);
+}
+
+.plumber-truck__assign label {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.plumber-truck__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.plumber-truck__chips button {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+.plumber-stop__window-edit {
+  display: grid;
+  gap: 0.2rem;
+  margin-top: 0.35rem;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.plumber-stop__fields {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.plumber-stop__fields label {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.plumber-stop__fields input,
+.plumber-stop__fields textarea,
+.plumber-stop__window-edit select,
+.plumber-truck__assign select,
+.plumber-stop__move select {
+  width: 100%;
+}
+
+.plumber-stop__notes textarea {
+  min-height: 6rem;
+  resize: vertical;
+}
+
+.plumber-stop__move {
+  display: grid;
+  gap: 0.2rem;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  min-width: 8rem;
+}
+
+.plumber-stop {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-primary);
+}
+
+.plumber-stop--cancelled {
+  opacity: 0.72;
+}
+
+.plumber-stop header {
+  display: flex;
+  gap: 0.65rem;
+  align-items: flex-start;
+}
+
+.plumber-stop__index {
+  display: grid;
+  place-items: center;
+  min-width: 1.85rem;
+  height: 1.85rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.plumber-stop header strong {
+  display: block;
+  font-size: 1rem;
+}
+
+.plumber-stop__window {
+  margin: 0.15rem 0 0;
+  color: var(--accent);
+  font-size: 0.88rem;
+}
+
+.plumber-stop__chip {
+  margin-left: auto;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.plumber-stop dl {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.plumber-stop dt {
+  color: var(--text-secondary);
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.plumber-stop dd {
+  margin: 0.1rem 0 0;
+  font-size: 0.92rem;
+  line-height: 1.4;
+}
+
+.plumber-stop a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.plumber-stop a:hover {
+  text-decoration: underline;
+}
+
+.plumber-stop details {
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+}
+
+.plumber-stop summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.plumber-stop pre {
+  margin: 0.45rem 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+
+.plumber-stop__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.plumber-stop__call {
+  background: var(--accent);
+  color: var(--bg-primary);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+a.plumber-stop__call {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 1rem;
+  text-decoration: none;
+}
+
+.plumber-stop__phone {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: baseline;
+}
+
+.plumber-stop__direct {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.plumber-stop__ticket {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+.plumber-stop__ticket:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.plumber-board__pdf {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+}
+
+.plumber-board__pdf-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.plumber-board__pdf-panel {
+  position: relative;
+  z-index: 1;
+  width: min(960px, calc(100vw - 1rem));
+  height: min(92vh, 960px);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+
+.plumber-board__pdf-panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.plumber-board__pdf-panel header div {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.plumber-board__pdf-panel header a {
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+
+.plumber-board__pdf-panel iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #111;
+}
+
+@media (max-width: 700px) {
+  .plumber-board {
+    padding: 0.75rem 0.75rem 2rem;
+  }
+
+  .plumber-stop dd {
+    font-size: 1rem;
+  }
+
+  .plumber-stop__pdf,
+  .plumber-stop__ticket,
+  .plumber-stop__call {
+    flex: 1 1 10rem;
+    justify-content: center;
+    text-align: center;
+  }
+}

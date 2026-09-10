@@ -29,12 +29,34 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    match /voiceSipSessions/{document} {
+      allow read, write: if false;
+    }
+
     match /plaudCalls/{document} {
       allow read, write: if true;
     }
 
     match /appConfig/{document} {
       allow read, write: if true;
+    }
+
+    // Server-side Teams sync. The Microsoft refresh token never leaves Functions;
+    // status for the UI lives in appConfig/teamsServerSync.
+    match /teamsServerAuthSecrets/{document} {
+      allow read, write: if false;
+    }
+    match /teamsServerAuthPending/{document} {
+      allow read, write: if false;
+    }
+
+    // Plaid access tokens and synced transactions are Admin SDK / Functions only.
+    match /plaidItems/{document} {
+      allow read, write: if false;
+    }
+
+    match /plaidTransactions/{document} {
+      allow read, write: if false;
     }
 
     match /schedulingRequests/{document} {
@@ -47,6 +69,134 @@ service cloud.firestore {
 
     match /smsOptOuts/{document} {
       allow read, write: if true;
+    }
+
+    // Phone SMS tab. The pairing token never leaves Cloud Functions.
+    match /smsGatewaySecrets/{document} {
+      allow read, write: if false;
+    }
+
+    match /smsGatewayStatus/{document} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /smsOutbox/{document} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /smsInbox/{document} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Nightly completed-job Excel copies. Written only by Cloud Functions.
+    // Collection: billingExports
+    // Fields: serviceDate (string YYYY-MM-DD), createdAt (timestamp),
+    //   trigger (manual|schedule), fileName, fileBase64, includedCount,
+    //   skippedCount, included, skipped, sourceSharePointUrl,
+    //   wroteToSharePoint (always false while testing).
+    match /billingExports/{document} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Signed-in Gmail inboxes. Refresh tokens stay in gmailInboxSecrets.
+    match /gmailInboxAccounts/{accountId} {
+      allow read: if true;
+      allow write: if false;
+      match /processed/{messageId} {
+        allow read, write: if false;
+      }
+    }
+    match /gmailInboxSecrets/{accountId} {
+      allow read, write: if false;
+    }
+    match /gmailOAuthPending/{state} {
+      allow read, write: if false;
+    }
+    match /gmailInboxBriefings/{document} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Inbox chat threads from the Email page. Office console, no Firebase Auth.
+    match /emailInboxChats/{document} {
+      allow read, write: if true;
+    }
+
+    // AI reply pipeline. Written only by Cloud Functions (draftEmailReply).
+    // emailMessages: persisted inbound mail + extracted identifiers + linked WOs.
+    // emailReplyDrafts: generated replies with evidence; nothing is auto-sent.
+    // emailCorrespondents: running markdown memory per sender.
+    match /emailMessages/{document} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /emailReplyDrafts/{document} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /emailCorrespondents/{document} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Voice Agent embeddings. Chunks are Admin SDK / Functions only.
+    match /voiceKnowledgeChunks/{document} {
+      allow read, write: if false;
+    }
+    match /voiceKnowledgeSources/{document} {
+      allow read, write: if false;
+    }
+    match /voiceKnowledgeMeta/{document} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /voiceAgentPendingActions/{document} {
+      allow read, write: if false;
+    }
+
+    // Crew time clock + GPS pings. Office console has no Firebase Auth.
+    // Collection: timeShifts
+    // Fields: plumberId, plumberName, truckId, date, status (open|closed),
+    //   clockInAt, clockOutAt, clockOutSource, clockIn, clockOut, lastPing,
+    //   lastPingAt, leftShop, shopArrivedAt, deviceId, createdAt
+    // Subcollection: timeShifts/{id}/pings
+    match /timeShifts/{shiftId} {
+      allow read, write: if true;
+      match /pings/{pingId} {
+        allow read, write: if true;
+      }
+    }
+
+    // Recorded plumber job calls. Twilio webhooks write via Admin SDK.
+    // Collection: plumberCalls
+    match /plumberCalls/{callId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /jobTickets/{ticketId} {
+      allow read, write: if true;
+
+      match /audit/{eventId} {
+        allow read: if true;
+        allow create: if request.resource.data.keys().hasAll([
+            'at',
+            'clientAt',
+            'action',
+            'changes',
+            'prevHash',
+            'hash'
+          ])
+          && request.resource.data.at == request.time
+          && request.resource.data.hash is string
+          && request.resource.data.hash.size() == 64
+          && request.resource.data.action in ['created', 'saved', 'signed', 'amended', 'deleted'];
+        allow update, delete: if false;
+      }
     }
 
     match /{document=**} {

@@ -4,6 +4,59 @@
   flex-direction: column;
 }
 
+.app--dispatch .app-header {
+  padding: 0.7rem 1.1rem !important;
+  gap: 0.65rem !important;
+}
+
+.app--dispatch .app-header h1 {
+  font-size: 1.15rem !important;
+}
+
+.work-order-header {
+  display: flex;
+  flex-direction: row;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background-color: var(--bg-secondary);
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.work-order-header[hidden] {
+  display: none;
+}
+
+.work-order-header h1,
+.plumber-header h1 {
+  color: var(--accent);
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.plumber-header {
+  display: flex;
+  flex-direction: row;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background-color: var(--bg-secondary);
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.plumber-header p {
+  margin: 0.2rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.work-order-header input[type='date'],
+.plumber-header input[type='date'] {
+  padding: 0.5rem;
+}
+
 main {
   flex: 1;
   padding: 0;

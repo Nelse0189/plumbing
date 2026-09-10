@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NJ Plumbing phone SMS helper</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #323437;
+        --card: #2c2e31;
+        --text: #d1d0c5;
+        --muted: #a8a79c;
+        --accent: #e2b714;
+        --border: #3c3e41;
+        --ok: #7eaa92;
+        --err: #ca4754;
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        padding: 1rem;
+        line-height: 1.4;
+      }
+      h1 {
+        font-size: 1.1rem;
+        color: var(--accent);
+        margin: 0 0 0.5rem;
+      }
+      p,
+      label {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      input,
+      textarea,
+      button {
+        width: 100%;
+        box-sizing: border-box;
+        margin: 0.35rem 0 0.75rem;
+        padding: 0.65rem;
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--text);
+        font: inherit;
+      }
+      button {
+        background: var(--accent);
+        color: #323437;
+        font-weight: 600;
+      }
+      .ghost {
+        background: var(--card);
+        color: var(--text);
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        padding: 0.85rem;
+        margin: 0.75rem 0;
+      }
+      .ok {
+        color: var(--ok);
+      }
+      .err {
+        color: var(--err);
+      }
+      pre {
+        white-space: pre-wrap;
+        font-size: 0.85rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Phone SMS helper</h1>
+    <p>
+      Keep this page open. The phone can stay idle. When a text is queued in the
+      office app, it appears here. Send uses the Messages app; then tap Mark sent.
+    </p>
+    <label>
+      Phone token
+      <input id="token" autocomplete="off" spellcheck="false" />
+    </label>
+    <button id="save" class="ghost" type="button">Save token</button>
+    <p id="status">Waiting for token…</p>
+    <div class="card" id="current">
+      <p>No message waiting.</p>
+    </div>
+    <button id="open" type="button" disabled>Open Messages</button>
+    <button id="sent" class="ghost" type="button" disabled>Mark sent</button>
+    <button id="failed" class="ghost" type="button" disabled>Mark failed</button>
+    <label>
+      Forward a received text (from)
+      <input id="from" placeholder="+18605551212" />
+    </label>
+    <label>
+      Message
+      <textarea id="inbound" rows="3"></textarea>
+    </label>
+    <button id="forward" class="ghost" type="button">Forward to office inbox</button>
+
+    <script>
+      const POLL = 'https://us-central1-nj-plumbing.cloudfunctions.net/smsGatewayPoll';
+      const ACK = 'https://us-central1-nj-plumbing.cloudfunctions.net/smsGatewayAck';
+      const INBOUND = 'https://us-central1-nj-plumbing.cloudfunctions.net/smsGatewayInbound';
+      const tokenInput = document.getElementById('token');
+      const statusEl = document.getElementById('status');
+      const currentEl = document.getElementById('current');
+      tokenInput.value = localStorage.getItem('njPhoneSmsToken') || '';
+
+      let current = null;
+
+      function token() {
+        return tokenInput.value.trim();
+      }
+
+      function setStatus(text, ok) {
+        statusEl.textContent = text;
+        statusEl.className = ok === true ? 'ok' : ok === false ? 'err' : '';
+      }
+
+      function render() {
+        const openBtn = document.getElementById('open');
+        const sentBtn = document.getElementById('sent');
+        const failedBtn = document.getElementById('failed');
+        if (!current) {
+          currentEl.innerHTML = '<p>No message waiting.</p>';
+          openBtn.disabled = true;
+          sentBtn.disabled = true;
+          failedBtn.disabled = true;
+          return;
+        }
+        currentEl.innerHTML =
+          '<p><strong>' +
+          current.to +
+          '</strong></p><pre>' +
+          current.message +
+          '</pre>';
+        openBtn.disabled = false;
+        sentBtn.disabled = false;
+        failedBtn.disabled = false;
+      }
+
+      async function poll() {
+        if (!token()) {
+          setStatus('Paste the token from the Phone SMS tab.');
+          return;
+        }
+        try {
+          const response = await fetch(POLL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Sms-Gateway-Token': token(),
+            },
+            body: JSON.stringify({ token: token() }),
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            setStatus(data.error || 'Poll failed', false);
+            return;
+          }
+          if (!current && data.messages && data.messages[0]) {
+            current = data.messages[0];
+            render();
+          }
+          setStatus('Phone idle. Last check ' + new Date().toLocaleTimeString(), true);
+        } catch (error) {
+          setStatus(String(error), false);
+        }
+      }
+
+      async function ack(status) {
+        if (!current) return;
+        const response = await fetch(ACK, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Sms-Gateway-Token': token(),
+          },
+          body: JSON.stringify({ token: token(), id: current.id, status }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          setStatus(data.error || 'Ack failed', false);
+          return;
+        }
+        current = null;
+        render();
+        setStatus(status === 'sent' ? 'Marked sent.' : 'Marked failed.', true);
+      }
+
+      document.getElementById('save').onclick = () => {
+        localStorage.setItem('njPhoneSmsToken', token());
+        setStatus('Token saved on this phone.', true);
+        void poll();
+      };
+      document.getElementById('open').onclick = () => {
+        if (!current) return;
+        const url =
+          'sms:' +
+          encodeURIComponent(current.to) +
+          '?body=' +
+          encodeURIComponent(current.message);
+        window.location.href = url;
+      };
+      document.getElementById('sent').onclick = () => void ack('sent');
+      document.getElementById('failed').onclick = () => void ack('failed');
+      document.getElementById('forward').onclick = async () => {
+        const from = document.getElementById('from').value.trim();
+        const message = document.getElementById('inbound').value.trim();
+        const response = await fetch(INBOUND, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Sms-Gateway-Token': token(),
+          },
+          body: JSON.stringify({ token: token(), from, message }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          setStatus(data.error || 'Forward failed', false);
+          return;
+        }
+        document.getElementById('inbound').value = '';
+        setStatus('Forwarded to the office inbox.', true);
+      };
+
+      render();
+      void poll();
+      setInterval(() => void poll(), 8000);
+    </script>
+  </body>
+</html>

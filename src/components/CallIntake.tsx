@@ -9,16 +9,21 @@ import {
   listPlaudCalls,
   processPlaudCall,
   processPlaudCalls,
+  getPlaudCallAudioUrl,
+  downloadPlaudCallAudio,
+  plaudCallAudioProxyUrl,
+  startPlaudOAuth,
   syncPlaudCalls,
 } from '../services/plaudService';
-import { beginPlaudOAuth, formatPlaudCallableError } from '../plaudOAuth';
-import { isPlaudDesktop, signInWithPlaudDesktop } from '../plaudDesktop';
+import { formatPlaudCallableError } from '../plaudOAuth';
 import {
   PLAUD_CONNECT_SOURCE,
   consumePlaudConnectToken,
   isAllowedPlaudConnectOrigin,
+  isPlaudWebSessionToken,
   stopPlaudSignInWatcher,
 } from '../plaudConnect';
+import { canSignInWithPlaudWindow, isPlaudDesktop, signInWithPlaudDesktop } from '../plaudDesktop';
 import {
   findWorkOrderForCall,
   getDaySchedulingInfo,
@@ -26,6 +31,23 @@ import {
   type DaySchedulingJob,
 } from '../services/dispatchService';
 import { formatUsd } from '../services/importProgressService';
+import {
+  azureConfigError,
+  getActiveAccount,
+  handleRedirectPromise,
+  signIn,
+} from '../teams-test/auth';
+import {
+  subscribeTeamsWatchTarget,
+  type TeamsWatchTarget,
+} from '../services/teamsWatchService';
+import {
+  applyTeamsPostToCall,
+  buildTeamsScheduleDraft,
+  callHasScheduleForTeams,
+  postTeamsScheduleDraft,
+  type TeamsSchedulePostDraft,
+} from '../services/teamsSchedulePostService';
 import NotesWithScheduleHighlight from './NotesWithScheduleHighlight';
 import './CallIntake.css';
 import './DispatchBoard.css';
@@ -274,6 +296,9 @@ function compareCallsForList(left: PlaudCall, right: PlaudCall): number {
 }
 
 function callNeedsProcessing(call: PlaudCall): boolean {
+  if (call.source === 'plumber-phone') {
+    return call.status === 'awaiting_transcript' || call.status === 'failed';
+  }
   return (
     call.status === 'in_plaud' ||
     call.status === 'awaiting_transcript' ||
@@ -282,6 +307,19 @@ function callNeedsProcessing(call: PlaudCall): boolean {
     call.source === 'plaud-whisper' ||
     !call.summary
   );
+}
+
+function callHasPlaudAudio(call: PlaudCall): boolean {
+  if (call.source === 'plumber-phone') return true;
+  if (call.source === 'plaud-manual') return false;
+  const fileId = call.id.replace(/^plaud-/, '');
+  return Boolean(fileId) && !fileId.startsWith('manual-');
+}
+
+function audioDownloadName(call: PlaudCall, fallback: string): string {
+  const raw = (call.recordingName || fallback || 'call').replace(/[<>:"/\\|?*]+/g, '-').trim();
+  const base = raw.slice(0, 80) || 'call';
+  return /\.(mp3|opus|m4a|wav|ogg)$/i.test(base) ? base : `${base}.mp3`;
 }
 
 function isStaleReviewReason(reason: string): boolean {
@@ -345,6 +383,9 @@ function transcriptSourceLabel(call: PlaudCall): string {
   }
   if (call.source === 'plaud-manual') {
     return 'Pasted transcript';
+  }
+  if (call.source === 'plumber-phone') {
+    return 'Recorded plumber job call';
   }
   return call.source || '';
 }
@@ -492,6 +533,119 @@ function CallSummaryBody({ call }: { call: PlaudCall }) {
         </details>
       ) : null}
     </div>
+  );
+}
+
+function TeamsScheduleApprovalModal({
+  drafts,
+  statuses,
+  errors,
+  approvingId,
+  onClose,
+  onApprove,
+  onSkip,
+}: {
+  drafts: TeamsSchedulePostDraft[];
+  statuses: Record<string, 'pending' | 'posting' | 'posted' | 'skipped' | 'error'>;
+  errors: Record<string, string>;
+  approvingId: string | null;
+  onClose: () => void;
+  onApprove: (draft: TeamsSchedulePostDraft) => void;
+  onSkip: (callId: string) => void;
+}) {
+  const pending = drafts.filter((draft) => (statuses[draft.call.id] || 'pending') === 'pending');
+  const posted = drafts.filter((draft) => statuses[draft.call.id] === 'posted');
+  const skipped = drafts.filter((draft) => statuses[draft.call.id] === 'skipped');
+  const busy = approvingId !== null;
+  return (
+    <Modal
+      title="Post schedules to Teams"
+      subtitle={`${pending.length} waiting for approval · ${posted.length} posted · ${skipped.length} skipped`}
+      onClose={busy ? () => undefined : onClose}
+      wide
+    >
+      <p className="call-intake__teams-confirm-lead">
+        These are the schedule notes from Plaud that would go to Teams. Approve each note
+        separately. Nothing is posted until you approve that row.
+      </p>
+      {drafts.length === 0 ? (
+        <p className="call-intake__empty">No unposted schedule notes to review.</p>
+      ) : (
+        <div className="call-intake__summary-list">
+          {drafts.map((draft) => {
+            const status = statuses[draft.call.id] || 'pending';
+            const canApprove =
+              (status === 'pending' || status === 'error') &&
+              Boolean(draft.destination) &&
+              !busy;
+            return (
+              <article
+                key={draft.call.id}
+                className={
+                  status === 'posted'
+                    ? 'call-intake__teams-preview call-intake__teams-preview--posted'
+                    : status === 'skipped'
+                      ? 'call-intake__teams-preview call-intake__teams-preview--skipped'
+                      : 'call-intake__teams-preview'
+                }
+              >
+                <header>
+                  <strong>{draft.jobLabel}</strong>
+                  <span>
+                    {draft.destination
+                      ? draft.destination.kind === 'reply'
+                        ? `Reply on the work-order thread (${draft.destination.channelName})`
+                        : `New post in ${draft.destination.channelName}`
+                      : 'No Teams destination yet'}
+                  </span>
+                  <span className={`call-intake__status call-intake__status--${status}`}>
+                    {status === 'posting' ? 'Posting' : status}
+                  </span>
+                </header>
+                {draft.destinationError && status === 'pending' ? (
+                  <p className="call-intake__error">{draft.destinationError}</p>
+                ) : null}
+                {status === 'error' ? (
+                  <p className="call-intake__error">
+                    {errors[draft.call.id] ||
+                      'Could not post this note. Fix the error, then approve it again.'}
+                  </p>
+                ) : null}
+                <pre className="call-intake__transcript">{draft.text}</pre>
+                {status === 'pending' || status === 'error' ? (
+                  <p className="call-intake__teams-row-actions">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => onSkip(draft.call.id)}
+                    >
+                      Skip
+                    </button>
+                    <button
+                      type="button"
+                      className="call-intake__primary"
+                      disabled={!canApprove}
+                      onClick={() => onApprove(draft)}
+                    >
+                      {approvingId === draft.call.id ? 'Posting…' : 'Approve and post this note'}
+                    </button>
+                  </p>
+                ) : status === 'posted' ? (
+                  <p className="call-intake__teams-posted">Posted to Teams</p>
+                ) : (
+                  <p className="call-intake__teams-skipped">Skipped — not posted</p>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      )}
+      <p className="call-intake__teams-row-actions">
+        <button type="button" disabled={busy} onClick={onClose}>
+          {pending.length === 0 ? 'Done' : 'Close'}
+        </button>
+      </p>
+    </Modal>
   );
 }
 
@@ -725,6 +879,7 @@ export default function CallIntake({
   const [answer, setAnswer] = useState('');
   const [asking, setAsking] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
   const [webToken, setWebToken] = useState('');
   const [webApiBase, setWebApiBase] = useState('https://api.plaud.ai');
   const [showReconnect, setShowReconnect] = useState(false);
@@ -737,9 +892,37 @@ export default function CallIntake({
   const [summaryCalls, setSummaryCalls] = useState<PlaudCall[] | null>(null);
   const [detailsWorkOrder, setDetailsWorkOrder] = useState<StoredWorkOrder | null>(null);
   const [loadingWorkOrderId, setLoadingWorkOrderId] = useState<string | null>(null);
+  const [audioSession, setAudioSession] = useState<{
+    callId: string;
+    url: string;
+    filename: string;
+    usingProxy?: boolean;
+  } | null>(null);
+  const [audioBusyId, setAudioBusyId] = useState<string | null>(null);
   const [dayJobs, setDayJobs] = useState<DaySchedulingInfo | null>(null);
   const [loadingDayJobs, setLoadingDayJobs] = useState(false);
+  const [teamsWatch, setTeamsWatch] = useState<TeamsWatchTarget | null>(null);
+  const [teamsSignedIn, setTeamsSignedIn] = useState(() => Boolean(getActiveAccount()));
+  const [teamsPostDrafts, setTeamsPostDrafts] = useState<TeamsSchedulePostDraft[] | null>(null);
+  const [teamsDraftStatus, setTeamsDraftStatus] = useState<
+    Record<string, 'pending' | 'posting' | 'posted' | 'skipped' | 'error'>
+  >({});
+  const [teamsDraftErrors, setTeamsDraftErrors] = useState<Record<string, string>>({});
+  const [teamsApprovingId, setTeamsApprovingId] = useState<string | null>(null);
+  const [teamsPostBusyId, setTeamsPostBusyId] = useState<string | null>(null);
   const connectingRef = useRef(false);
+
+  useEffect(() => {
+    return subscribeTeamsWatchTarget(setTeamsWatch, (err) => {
+      console.warn('Could not load the Teams watch channel:', err);
+    });
+  }, []);
+
+  useEffect(() => {
+    void handleRedirectPromise()
+      .catch(() => null)
+      .then(() => setTeamsSignedIn(Boolean(getActiveAccount())));
+  }, []);
 
   const reload = async () => {
     setLoading(true);
@@ -753,7 +936,7 @@ export default function CallIntake({
       setConnection(nextConnection);
       return nextCalls;
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatPlaudCallableError(err));
       return [] as PlaudCall[];
     } finally {
       setLoading(false);
@@ -770,6 +953,7 @@ export default function CallIntake({
     try {
       await connectPlaudWebSession({
         token: trimmed,
+        cookie: trimmed,
         apiBase: webApiBase,
       });
       setWebToken('');
@@ -778,7 +962,7 @@ export default function CallIntake({
       stopPlaudSignInWatcher();
       await reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatPlaudCallableError(err));
       setConnectHint('');
     } finally {
       connectingRef.current = false;
@@ -788,10 +972,38 @@ export default function CallIntake({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [webApiBase]);
 
+  const syncFromPlaud = async (input: { date?: string; allTime?: boolean }) => {
+    if (isPlaudDesktop() && window.plaudDesktop?.listLibrary) {
+      const listed = await window.plaudDesktop.listLibrary({
+        date: input.date,
+        allTime: input.allTime,
+      });
+      if (listed.error) throw new Error(listed.error);
+      if (listed.token) {
+        try {
+          await connectPlaudWebSession({
+            token: listed.token,
+            cookie: listed.token,
+            apiBase: webApiBase,
+          });
+        } catch (err) {
+          console.warn('Saved Plaud login after local list failed', err);
+        }
+      }
+      if (!listed.files?.length) {
+        throw new Error(
+          'Plaud’s window can see recordings, but this app could not copy that list. Keep the recordings visible and try Sync again.'
+        );
+      }
+      return syncPlaudCalls({ ...input, files: listed.files });
+    }
+    return syncPlaudCalls(input);
+  };
+
   useEffect(() => {
     void reload();
     const incoming = consumePlaudConnectToken();
-    if (incoming) void connectWithToken(incoming);
+    if (incoming && isPlaudWebSessionToken(incoming)) void connectWithToken(incoming);
     if (oauthFailed && oauthNotice) setError(oauthNotice);
     // Load the full library once; day chips filter it locally.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -859,7 +1071,7 @@ export default function CallIntake({
   };
 
   const handleShowSummary = async (call: PlaudCall) => {
-    if (call.summary && (call.source === 'plaud-whisper' || call.hasSpeakerLabels)) {
+    if (call.summary && (call.source === 'plaud-whisper' || call.source === 'plumber-phone' || call.hasSpeakerLabels)) {
       setSummaryCall(call);
       return;
     }
@@ -933,6 +1145,52 @@ export default function CallIntake({
     }
   };
 
+  const handlePlayCallAudio = async (call: PlaudCall) => {
+    if (audioSession?.callId === call.id) {
+      setAudioSession(null);
+      return;
+    }
+    setAudioBusyId(call.id);
+    setError(null);
+    try {
+      const link = await getPlaudCallAudioUrl(call.id);
+      setAudioSession({
+        callId: call.id,
+        url: link.url,
+        filename: audioDownloadName(call, link.filename),
+      });
+                } catch {
+      setAudioSession({
+        callId: call.id,
+        url: plaudCallAudioProxyUrl(call.id),
+        filename: audioDownloadName(call, 'call.mp3'),
+        usingProxy: true,
+      });
+    } finally {
+      setAudioBusyId(null);
+    }
+  };
+
+  const handleDownloadCallAudio = async (call: PlaudCall) => {
+    setAudioBusyId(call.id);
+    setError(null);
+    try {
+      const { blob, filename } = await downloadPlaudCallAudio(call.id);
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = audioDownloadName(call, filename);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      setError(formatPlaudCallableError(err));
+    } finally {
+      setAudioBusyId(null);
+    }
+  };
+
   const handleShowWorkOrder = async (call: PlaudCall) => {
     setLoadingWorkOrderId(call.id);
     setError(null);
@@ -948,6 +1206,141 @@ export default function CallIntake({
     } finally {
       setLoadingWorkOrderId(null);
     }
+  };
+
+  const ensureMicrosoftForTeamsPost = async () => {
+    if (azureConfigError) throw new Error(azureConfigError);
+    await handleRedirectPromise().catch(() => null);
+    if (!getActiveAccount()) {
+      await signIn();
+    }
+    setTeamsSignedIn(Boolean(getActiveAccount()));
+    if (!getActiveAccount()) {
+      throw new Error('Sign in with Microsoft on the Teams tab, then confirm the post here.');
+    }
+  };
+
+  const prepareTeamsDraft = async (
+    call: PlaudCall,
+    dispatch?: DaySchedulingJob | null
+  ): Promise<TeamsSchedulePostDraft> => {
+    const loaded =
+      dispatch?.workOrder ||
+      (await findWorkOrderForCall({
+        workOrderId: call.workOrderId,
+        workOrderNumber: workOrderNumberForCall(call),
+      }));
+    return buildTeamsScheduleDraft({
+      call,
+      workOrder: loaded,
+      appointmentDate: appointmentDateForCall(call),
+      watch: teamsWatch,
+      dispatch: dispatch
+        ? { truckName: dispatch.truckName, windowLabel: dispatch.windowLabel }
+        : null,
+    });
+  };
+
+  const handleReviewTeamsSchedules = async () => {
+    const eligible = visibleCalls.filter(
+      (call) =>
+        !call.teamsPostedAt &&
+        callHasScheduleForTeams(call) &&
+        (call.appointmentMade || appointmentDateForCall(call))
+    );
+    if (eligible.length === 0) {
+      setError(
+        'No unposted Plaud schedule notes to review. Process calls that booked a service day first.'
+      );
+      return;
+    }
+    setTeamsPostBusyId('review');
+    setError(null);
+    try {
+      const extraIds = eligible
+        .map((call) => call.workOrderId)
+        .filter((id): id is string => Boolean(id));
+      const dates = [
+        ...new Set(
+          eligible
+            .map((call) => appointmentDateForCall(call))
+            .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date))
+        ),
+      ];
+      if (!dates.includes(selectedDate)) dates.push(selectedDate);
+      const dispatchById = new Map<string, DaySchedulingJob>();
+      const dispatchByNumber = new Map<string, DaySchedulingJob>();
+      for (const date of dates) {
+        const info = await getDaySchedulingInfo(date, extraIds);
+        for (const job of info.jobs) {
+          dispatchById.set(job.workOrder.id, job);
+          if (job.workOrder.workOrderNumber) {
+            dispatchByNumber.set(job.workOrder.workOrderNumber, job);
+          }
+        }
+      }
+      const drafts: TeamsSchedulePostDraft[] = [];
+      for (const call of eligible) {
+        const woNumber = workOrderNumberForCall(call);
+        const dispatch =
+          (call.workOrderId ? dispatchById.get(call.workOrderId) : undefined) ||
+          (woNumber ? dispatchByNumber.get(woNumber) : undefined) ||
+          null;
+        drafts.push(await prepareTeamsDraft(call, dispatch));
+      }
+      setTeamsDraftStatus(
+        Object.fromEntries(drafts.map((draft) => [draft.call.id, 'pending' as const]))
+      );
+      setTeamsDraftErrors({});
+      setTeamsPostDrafts(drafts);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTeamsPostBusyId(null);
+    }
+  };
+
+  const handleApproveTeamsDraft = async (draft: TeamsSchedulePostDraft) => {
+    if (teamsApprovingId) return;
+    setTeamsApprovingId(draft.call.id);
+    setTeamsDraftStatus((current) => ({ ...current, [draft.call.id]: 'posting' }));
+    setTeamsDraftErrors((current) => {
+      const next = { ...current };
+      delete next[draft.call.id];
+      return next;
+    });
+    setError(null);
+    try {
+      await ensureMicrosoftForTeamsPost();
+      const posted = await postTeamsScheduleDraft(draft);
+      if (!draft.destination) {
+        throw new Error('No Teams destination for this schedule note.');
+      }
+      const nextCall = applyTeamsPostToCall(draft.call, posted, draft.destination);
+      setCalls((current) => current.map((call) => (call.id === nextCall.id ? nextCall : call)));
+      setSummaryCall((current) => (current?.id === nextCall.id ? nextCall : current));
+      setTeamsPostDrafts((current) =>
+        current
+          ? current.map((item) =>
+              item.call.id === nextCall.id
+                ? { ...item, call: nextCall, alreadyPostedAt: nextCall.teamsPostedAt }
+                : item
+            )
+          : current
+      );
+      setTeamsDraftStatus((current) => ({ ...current, [draft.call.id]: 'posted' }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setTeamsDraftErrors((current) => ({ ...current, [draft.call.id]: message }));
+      setTeamsDraftStatus((current) => ({ ...current, [draft.call.id]: 'error' }));
+    } finally {
+      setTeamsApprovingId(null);
+    }
+  };
+
+  const handleSkipTeamsDraft = (callId: string) => {
+    if (teamsApprovingId) return;
+    setTeamsDraftStatus((current) => ({ ...current, [callId]: 'skipped' }));
   };
 
   const handleShowDayWorkOrders = async () => {
@@ -977,12 +1370,19 @@ export default function CallIntake({
           <p>
             Process all recordings on the server and save transcripts, dispatcher
             summaries, and work orders to Firebase. New calls from the last two
-            days are also processed automatically about every 15 minutes.
+            days are also processed automatically about every 15 minutes. Posting a
+            schedule into Teams opens a list of notes; each note must be approved on its
+            own.
           </p>
           <p className={`call-intake__connection ${connection?.connected ? 'is-connected' : 'is-disconnected'}`}>
             {connection?.connected
               ? `Connected to Plaud${connection.mode === 'web' ? ' via web.plaud.ai' : ''}${connection.name || connection.email ? ` · ${connection.name || connection.email}` : ''}${connection.tokenType ? ` · ${connection.tokenType}` : ''}${connection.apiBase ? ` · ${connection.apiBase.replace(/^https:\/\//, '')}` : ''}${typeof connection.libraryCount === 'number' ? ` · ${connection.libraryCount} in Plaud` : ''}`
               : 'Plaud is not connected. Click Sign in with Plaud below.'}
+          </p>
+          <p className={`call-intake__connection ${teamsSignedIn ? 'is-connected' : 'is-disconnected'}`}>
+            {teamsSignedIn
+              ? `Microsoft is signed in${teamsWatch ? ` · Teams destination ${teamsWatch.channelName}` : ' · pick a channel on the Teams tab to post new notes'}`
+              : 'Microsoft is not signed in. Sign-in is requested when you approve a schedule note.'}
           </p>
         </div>
         <div className="call-intake__actions">
@@ -1011,12 +1411,12 @@ export default function CallIntake({
               setSyncMode('all');
               setError(null);
               try {
-                const summary = await syncPlaudCalls({ allTime: true });
+                const summary = await syncFromPlaud({ allTime: true });
                 setSyncSummary(summary);
                 setListScope('all');
                 await reload();
               } catch (err) {
-                setError(err instanceof Error ? err.message : String(err));
+                setError(formatPlaudCallableError(err));
               } finally {
                 setSyncMode(null);
               }
@@ -1031,12 +1431,12 @@ export default function CallIntake({
               setSyncMode('day');
               setError(null);
               try {
-                const summary = await syncPlaudCalls({ date: selectedDate });
+                const summary = await syncFromPlaud({ date: selectedDate });
                 setSyncSummary(summary);
                 setListScope('day');
                 await reload();
               } catch (err) {
-                setError(err instanceof Error ? err.message : String(err));
+                setError(formatPlaudCallableError(err));
               } finally {
                 setSyncMode(null);
               }
@@ -1121,6 +1521,25 @@ export default function CallIntake({
               ? 'Loading work orders…'
               : `Work orders for ${formatLongDate(selectedDate)}`}
           </button>
+          <button
+            type="button"
+            className="call-intake__primary"
+            disabled={
+              teamsApprovingId !== null ||
+              teamsPostBusyId !== null ||
+              visibleCalls.filter(
+                (call) =>
+                  !call.teamsPostedAt &&
+                  callHasScheduleForTeams(call) &&
+                  (call.appointmentMade || appointmentDateForCall(call))
+              ).length === 0
+            }
+            onClick={() => void handleReviewTeamsSchedules()}
+          >
+            {teamsPostBusyId === 'review'
+              ? 'Loading schedule notes…'
+              : 'Post schedules to Teams'}
+          </button>
         </div>
       </section>
 
@@ -1130,39 +1549,52 @@ export default function CallIntake({
         <section className="call-intake__mock">
           <h3>Connect Plaud</h3>
           <p>
-            {isPlaudDesktop()
-              ? 'Click the button and sign in to Plaud in the window that opens. This desktop app can read that login and connect automatically.'
-              : 'For a one-click Plaud login, open this app with npm run desktop. The browser cannot read a Plaud window by itself.'}
+            Click Sign in with Plaud and log in as the plumber whose Note has
+            the calls. Stay on the Plaud home page until the recordings list is
+            visible. Do not use the OAuth page that 404s after login.
           </p>
           <div className="call-intake__connect-actions">
             <button
               type="button"
               className="call-intake__primary"
-              disabled={connecting}
+              disabled={connecting || signingIn}
               onClick={() => {
                 void (async () => {
                   setError(null);
-                  setConnectHint(
-                    isPlaudDesktop()
-                      ? 'Sign in in the Plaud window…'
-                      : 'Opening Plaud…'
-                  );
+                  setSigningIn(true);
                   try {
-                    if (isPlaudDesktop()) {
+                    if (await canSignInWithPlaudWindow()) {
+                      setConnectHint(
+                        'Sign in at web.plaud.ai in the window that opened. Wait until your recordings list is visible — this app will close that window when it has a working login.'
+                      );
                       const token = await signInWithPlaudDesktop();
                       await connectWithToken(token);
                       return;
                     }
-                    const url = await beginPlaudOAuth();
-                    window.location.assign(url);
+                    setConnectHint('Opening Plaud authorization…');
+                    const { url } = await startPlaudOAuth();
+                    const popup = window.open(
+                      url,
+                      'plaud-oauth',
+                      'width=520,height=740,noopener=no'
+                    );
+                    if (!popup) {
+                      window.location.assign(url);
+                    } else {
+                      setConnectHint(
+                        'Finish sign-in in the Plaud window. After you authorize, this app will take over.'
+                      );
+                    }
                   } catch (err) {
                     setConnectHint('');
                     setError(formatPlaudCallableError(err));
+                  } finally {
+                    setSigningIn(false);
                   }
                 })();
               }}
             >
-              Sign in with Plaud
+              {signingIn ? 'Sign in in the Plaud window…' : 'Sign in with Plaud'}
             </button>
             {showReconnect && connection?.connected ? (
               <button type="button" onClick={() => setShowReconnect(false)}>
@@ -1330,6 +1762,28 @@ export default function CallIntake({
                 >
                   {processingCallId === call.id ? 'Opening…' : 'Summary'}
                 </button>
+                {callHasPlaudAudio(call) ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={audioBusyId !== null}
+                      onClick={() => void handlePlayCallAudio(call)}
+                    >
+                      {audioBusyId === call.id
+                        ? 'Loading…'
+                        : audioSession?.callId === call.id
+                          ? 'Stop'
+                          : 'Play'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={audioBusyId !== null}
+                      onClick={() => void handleDownloadCallAudio(call)}
+                    >
+                      {audioBusyId === call.id ? 'Loading…' : 'Download'}
+                    </button>
+                  </>
+                ) : null}
                 {callHasLinkedWorkOrder(call) ? (
                   <button
                     type="button"
@@ -1341,6 +1795,28 @@ export default function CallIntake({
                 ) : null}
               </span>
             </header>
+            {audioSession?.callId === call.id ? (
+              <audio
+                className="call-intake__audio"
+                src={audioSession.url}
+                controls
+                autoPlay
+                onError={() => {
+                  if (!audioSession.usingProxy) {
+                    setAudioSession({
+                      ...audioSession,
+                      url: plaudCallAudioProxyUrl(call.id),
+                      usingProxy: true,
+                    });
+                    return;
+                  }
+                  setError('Could not play this recording. Try Download instead.');
+                  setAudioSession(null);
+                }}
+              >
+                Your browser cannot play this recording.
+              </audio>
+            ) : null}
             {call.summary && <p>{call.summary}</p>}
             {!call.summary && call.plaudSummary && <p>{call.plaudSummary}</p>}
             {detectedDate ? (
@@ -1351,12 +1827,28 @@ export default function CallIntake({
                   <span>Work order: {workOrderNumberForCall(call)}</span>
                 ) : null}
                 {call.costUsd != null ? <span>OpenAI {formatUsd(call.costUsd)}</span> : null}
+                {call.teamsPostedAt ? (
+                  <span className="call-intake__teams-posted">
+                    Posted to Teams {new Date(call.teamsPostedAt).toLocaleString()}
+                    {call.teamsPostedWebUrl ? (
+                      <>
+                        {' '}
+                        <a href={call.teamsPostedWebUrl} target="_blank" rel="noreferrer">
+                          Open
+                        </a>
+                      </>
+                    ) : null}
+                  </span>
+                ) : null}
               </p>
             ) : call.appointmentMade ? (
               <p className="call-intake__appointment">
                 Water-heater appointment detected
                 {workOrderNumberForCall(call) ? ` · Work order: ${workOrderNumberForCall(call)}` : ''}
                 {call.costUsd != null ? ` · OpenAI ${formatUsd(call.costUsd)}` : ''}
+                {call.teamsPostedAt
+                  ? ` · Posted to Teams ${new Date(call.teamsPostedAt).toLocaleString()}`
+                  : ''}
               </p>
             ) : call.costUsd != null ? (
               <p className="call-intake__appointment">OpenAI {formatUsd(call.costUsd)}</p>
@@ -1494,8 +1986,47 @@ export default function CallIntake({
           onClose={() => setSummaryCall(null)}
         >
           <CallSummaryBody call={summaryCall} />
-          {callHasLinkedWorkOrder(summaryCall) ? (
-            <p className="call-intake__call-actions">
+          {audioSession?.callId === summaryCall.id ? (
+            <audio
+              className="call-intake__audio"
+              src={audioSession.url}
+              controls
+              autoPlay
+              onError={() => {
+                if (!audioSession.usingProxy) {
+                  setAudioSession({
+                    ...audioSession,
+                    url: plaudCallAudioProxyUrl(summaryCall.id),
+                    usingProxy: true,
+                  });
+                }
+              }}
+            />
+          ) : null}
+          <p className="call-intake__call-actions">
+            {callHasPlaudAudio(summaryCall) ? (
+              <>
+                <button
+                  type="button"
+                  disabled={audioBusyId !== null}
+                  onClick={() => void handlePlayCallAudio(summaryCall)}
+                >
+                  {audioBusyId === summaryCall.id
+                    ? 'Loading…'
+                    : audioSession?.callId === summaryCall.id
+                      ? 'Stop'
+                      : 'Play'}
+                </button>
+                <button
+                  type="button"
+                  disabled={audioBusyId !== null}
+                  onClick={() => void handleDownloadCallAudio(summaryCall)}
+                >
+                  {audioBusyId === summaryCall.id ? 'Loading…' : 'Download'}
+                </button>
+              </>
+            ) : null}
+            {callHasLinkedWorkOrder(summaryCall) ? (
               <button
                 type="button"
                 disabled={loadingWorkOrderId !== null}
@@ -1503,8 +2034,8 @@ export default function CallIntake({
               >
                 {loadingWorkOrderId === summaryCall.id ? 'Opening…' : 'Work order'}
               </button>
-            </p>
-          ) : null}
+            ) : null}
+          </p>
         </Modal>
       ) : null}
 
@@ -1547,6 +2078,24 @@ export default function CallIntake({
         <WorkOrderDetailsModal
           order={detailsWorkOrder}
           onClose={() => setDetailsWorkOrder(null)}
+        />
+      ) : null}
+
+      {teamsPostDrafts ? (
+        <TeamsScheduleApprovalModal
+          drafts={teamsPostDrafts}
+          statuses={teamsDraftStatus}
+          errors={teamsDraftErrors}
+          approvingId={teamsApprovingId}
+          onClose={() => {
+            if (!teamsApprovingId) {
+              setTeamsPostDrafts(null);
+              setTeamsDraftStatus({});
+              setTeamsDraftErrors({});
+            }
+          }}
+          onApprove={(draft) => void handleApproveTeamsDraft(draft)}
+          onSkip={handleSkipTeamsDraft}
         />
       ) : null}
 

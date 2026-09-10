@@ -50,6 +50,8 @@ export async function getTrucksForDate(date: string): Promise<Truck[]> {
     { id: 'truck3', name: 'Truck 3', stops: [] },
     { id: 'truck4', name: 'Truck 4', stops: [] },
     { id: 'truck5', name: 'Truck 5', stops: [] },
+    { id: 'truck6', name: 'Truck 6', stops: [] },
+    { id: 'truck7', name: 'Truck 7', stops: [] },
   ];
 }
 

@@ -59,3 +59,35 @@ export async function resolveGoogleMapsApiKey(): Promise<string> {
 
   return '';
 }
+
+let mapsLoader: Promise<boolean> | null = null;
+
+export async function loadGoogleMapsJs(): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  if (window.google?.maps?.DirectionsService) return true;
+  if (mapsLoader) return mapsLoader;
+
+  mapsLoader = resolveGoogleMapsApiKey().then((apiKey) => {
+    if (!apiKey) return false;
+    if (window.google?.maps?.DirectionsService) return true;
+    return new Promise<boolean>((resolve) => {
+      const existing = document.querySelector<HTMLScriptElement>(
+        'script[src*="maps.googleapis.com/maps/api/js"]'
+      );
+      if (existing) {
+        existing.addEventListener('load', () => resolve(true));
+        existing.addEventListener('error', () => resolve(false));
+        if (window.google?.maps?.DirectionsService) resolve(true);
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}`;
+      script.async = true;
+      script.onload = () => resolve(Boolean(window.google?.maps?.DirectionsService));
+      script.onerror = () => resolve(false);
+      document.head.appendChild(script);
+    });
+  });
+
+  return mapsLoader;
+}

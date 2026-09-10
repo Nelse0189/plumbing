@@ -1,16 +1,28 @@
 import type { ArrivalWindow } from '../types';
 
+/** Standard arrival windows offered on the dispatch board. */
+export const DISPATCH_TIME_SLOTS: ArrivalWindow[] = [
+  { start: '10:00', end: '12:00' },
+  { start: '11:30', end: '15:30' },
+  { start: '13:00', end: '17:00' },
+  { start: '14:00', end: '18:00' },
+  { start: '15:00', end: '19:00' },
+];
+
+export function windowKey(window: ArrivalWindow): string {
+  return `${window.start}|${window.end}`;
+}
+
+export function windowsEqual(a: ArrivalWindow, b: ArrivalWindow): boolean {
+  return a.start === b.start && a.end === b.end;
+}
+
 /**
- * Default 4-hour windows by stop order on a truck:
- * 1st 8–12, 2nd 10–2, 3rd 12–4, then +2h start each stop (capped).
+ * Default windows by stop order on a truck:
+ * 1st 10–12, 2nd 11:30–3:30, 3rd 1–5, 4th 2–6, 5th 3–7, then wrap.
  */
 export function defaultWindowForStopIndex(index: number): ArrivalWindow {
-  const startHour = Math.min(8 + index * 2, 15);
-  const endHour = Math.min(startHour + 4, 19);
-  return {
-    start: `${String(startHour).padStart(2, '0')}:00`,
-    end: `${String(endHour).padStart(2, '0')}:00`,
-  };
+  return DISPATCH_TIME_SLOTS[index % DISPATCH_TIME_SLOTS.length];
 }
 
 export function applyDefaultWindows<T extends { customWindow: boolean; window: ArrivalWindow }>(
@@ -36,16 +48,23 @@ function formatClock(hhmm: string): string {
   return minuteText === '00' ? `${twelve} ${meridiem}` : `${twelve}:${minuteText} ${meridiem}`;
 }
 
-export const DISPATCH_TRUCK_COUNT = 5;
+export const DISPATCH_TRUCK_COUNT = 7;
 
 export const DEFAULT_DISPATCH_ORIGIN =
   import.meta.env.VITE_DISPATCH_ORIGIN_ADDRESS?.trim() ||
   '216 Christian Lane, Berlin, CT';
 
+/** 216 Christian Lane, Berlin, CT — used when live geocoding is blocked. */
+export const DEFAULT_DISPATCH_ORIGIN_COORDS = {
+  lat: 41.63711,
+  lng: -72.75087,
+};
+
 export function createEmptyDispatchTrucks() {
   return Array.from({ length: DISPATCH_TRUCK_COUNT }, (_, index) => ({
     id: `truck${index + 1}`,
     name: `Truck ${index + 1}`,
+    plumberIds: [] as string[],
     set: false,
     stops: [],
   }));

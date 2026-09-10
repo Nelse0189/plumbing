@@ -32,8 +32,14 @@ User.Read
 Team.ReadBasic.All
 Channel.ReadBasic.All
 ChannelMessage.Read.All
+ChannelMessage.Send
 Files.Read.All
 ```
+
+`ChannelMessage.Send` is delegated only and is used when staff approve a Plaud-derived
+schedule note in the Calls tab. The app never posts to Teams on its own; the Graph
+write runs after an in-app **Approve and post this note** click. Overnight server
+sync stays read-only and does not include this permission.
 
 `Files.Read.All` is required to resolve the actual document library behind a
 Teams channel through the Graph `filesFolder` API. Access remains delegated: the
@@ -155,6 +161,10 @@ developer API — the same API used by `plaud files` and `plaud transcript`.
    was explicitly booked, a work order is created and the confirming transcript
    wording is highlighted.
 5. Use **Ask AI about calls from this day** to question that day's recordings.
+6. **Post schedules to Teams** opens a list of unposted Plaud schedule notes.
+   Approve each note separately. Skipped notes are not written. If the work
+   order already has a Teams PDF thread, the approved note is a reply on that
+   thread; otherwise it is a new post in the watched channel from the Teams tab.
 
 Recordings that have uploaded to Plaud but are still transcribing are stored as
 `awaiting_transcript` and picked up on the next sync. Manual transcript import
